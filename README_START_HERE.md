@@ -148,8 +148,8 @@ tomorrow's failure risk, why the risk is high, an alert log (came true / false a
 health signals (missing rows, data drift, source speed, sudden jumps). Click a pipeline to open it.
 
 - **Rebuilt every morning** by the GitHub Action (`python build_dashboard.py`, after `run_daily.py`).
-- **Open it:** double-click `dashboard/index.html` (all data is inside the file), or host the
-  `dashboard/` folder on any static host.
+- **Live link:** https://vrushablanjekar.github.io/DPFP-Project/ (published by `.github/workflows/pages.yml`
+  after every daily run). Offline: double-click `dashboard/index.html` (all data is inside the file).
 - **Honest history:** each day's forecast is saved as it is made in `outputs/forecast_log.csv`.
 - **Add a pipeline:** add one entry to `PIPELINES` in `build_dashboard.py` (its run log needs the
   same columns as `logs/*/pipeline_runs.csv`). The dashboard's "+ Add pipeline" screen checks a CSV.
