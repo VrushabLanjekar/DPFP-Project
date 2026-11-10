@@ -148,7 +148,7 @@ svg text{fill:var(--muted);font-family:var(--mono);font-size:11px}
     <section class="kpis" id="f-kpis"></section>
     <section class="panel tbl-wrap">
       <table>
-        <thead><tr><th>Pipeline</th><th>Status</th><th>Risk tomorrow</th><th>Likely problem</th><th>Last 14 days</th><th>Signals</th><th>Owner</th></tr></thead>
+        <thead><tr><th>Pipeline</th><th>Status</th><th>Risk, next run</th><th>Likely problem</th><th>Last 14 days</th><th>Signals</th><th>Owner</th></tr></thead>
         <tbody id="f-rows"></tbody>
       </table>
       <div class="legend"><span>Signals, left to right: missing rows · data drift · source speed · sudden jumps</span><span><i class="d-ok"></i>normal</span><span><i class="d-warn"></i>above usual</span><span><i class="d-bad"></i>high</span></div>
@@ -212,7 +212,7 @@ const pc = v => (v*100).toFixed(1);
 const esc = s => String(s).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
 const SIG = [
   {name:"Missing rows", unit:"%", help:"Share of expected hourly rows that never arrived"},
-  {name:"Data drift", unit:"", help:"How different today's data looks from normal (PSI)"},
+  {name:"Data drift", unit:"", help:"How different this run's data looks from normal (PSI)"},
   {name:"Source speed", unit:" s", help:"How long the source took to answer"},
   {name:"Sudden jumps", unit:"", help:"Biggest hour-to-hour change in readings"}];
 const TYPES = {bad:"Broken values", slow:"Source too slow"};
@@ -220,7 +220,7 @@ const isFail = d => d.s==="F";
 
 function state(P){
   const d = P.days[at];
-  if(d.s==="F") return {k:"bad", chip:"FAILED TODAY", rank:3};
+  if(d.s==="F") return {k:"bad", chip:"FAILED", rank:3};
   if(d.p>=TH) return P.lowconf ? {k:"warn", chip:"WATCH · LOW CONF.", rank:1.5} : {k:"bad", chip:"ALERT", rank:2};
   if(d.p>=TH*0.8) return {k:"warn", chip:"WATCH", rank:1};
   return {k:"ok", chip:"OK", rank:0};
@@ -230,28 +230,29 @@ function likely(P){ const d = P.days[at]; if(d.s==="F") return TYPES[d.t]||"Fail
 function sigState(P,k,v){ const [m,h]=P.norm[k]; if(v==null) return "grey"; if(v>h) return "bad"; if(v>m*1.25 && v>m+0.01) return "warn"; return "ok"; }
 function stats(P){ const lo=Math.max(1,at-29); let f=0,c=0,fa=0; for(let k=lo;k<=at;k++){ const d=P.days[k], pr=P.days[k-1];
   if(isFail(d)){ f++; if(pr.p>=TH) c++; } if(pr.p>=TH && !isFail(d)) fa++; } return {f,c,fa}; }
-const tomorrowName = () => fd(add(DATES[at],1),{weekday:"long"});
+const nextDay = () => fd(add(DATES[at],1),{weekday:"short",day:"numeric",month:"short"});
+const tomorrowName = () => "on "+nextDay();
 
 function renderTop(){
   const live = at===N-1;
   $("#live").className = "live"+(live?"":" replay"); $("#live-t").textContent = live?"LIVE":"REPLAY";
-  $("#asof").innerHTML = live ? `Data up to <b>${fd(DATES[at],{day:"numeric",month:"short",year:"numeric"})}</b> · updates daily 08:00 IST` : `Showing <b>${fd(DATES[at],{weekday:"short",day:"numeric",month:"short"})}</b> as it looked that day`;
+  $("#asof").innerHTML = live ? `Latest run: <b>${fd(DATES[at],{weekday:"short",day:"numeric",month:"short"})}</b> data · forecasting <b>${nextDay()}</b> · updates daily 08:00 IST` : `Showing <b>${fd(DATES[at],{weekday:"short",day:"numeric",month:"short"})}</b> as it looked that day`;
 }
 function setSummary(pre,k,h,p){ $(`#${pre}-sum`).className="summary "+k; $(`#${pre}-ic`).textContent = k==="ok"?"✓":"!"; $(`#${pre}-h`).textContent=h; $(`#${pre}-p`).textContent=p; }
 
 function renderFleet(){
   const rows = PIPES.map(P=>({P, st:state(P), d:P.days[at]})).sort((a,b)=> b.st.rank-a.st.rank || b.d.p-a.d.p);
-  const failed = rows.filter(r=>r.st.chip==="FAILED TODAY"), alert = rows.filter(r=>r.st.chip==="ALERT"), watch = rows.filter(r=>r.st.k==="warn");
+  const failed = rows.filter(r=>r.st.chip==="FAILED"), alert = rows.filter(r=>r.st.chip==="ALERT"), watch = rows.filter(r=>r.st.k==="warn");
   const need = failed.length+alert.length, total = PIPES.length;
   if(need){ const top = failed[0] || alert[0];
-    const parts = []; if(failed.length) parts.push(`${failed.length} failed today`); if(alert.length) parts.push(`${alert.length} may fail ${tomorrowName()}`);
+    const parts = []; if(failed.length) parts.push(`${failed.length} failed in the latest run`); if(alert.length) parts.push(`${alert.length} may fail ${tomorrowName()}`);
     setSummary("f","bad",`${need} of ${total} pipelines need attention: ${parts.join(", ")}.`,
-      failed.length ? `Start with ${top.P.name}: ${likely(top.P).toLowerCase()} today.${alert.length?` Highest risk tomorrow: ${alert[0].P.name} (${pc(alert[0].d.p)}%).`:""}`
+      failed.length ? `Start with ${top.P.name}: ${likely(top.P).toLowerCase()} in the latest run.${alert.length?` Highest risk next: ${alert[0].P.name} (${pc(alert[0].d.p)}%).`:""}`
                     : `Highest risk: ${top.P.name} (${pc(top.d.p)}%), likely ${likely(top.P).toLowerCase()}${(top.d.why||[])[0]?`, mainly: ${top.d.why[0].toLowerCase()}`:""}.`);
   } else if(watch.length) setSummary("f","warn",`No alerts. ${watch.length} pipeline${watch.length>1?"s":""} to keep an eye on.`,`${watch.map(r=>r.P.name).join(", ")} ${watch.length>1?"are":"is"} close to the alert level.`);
-  else setSummary("f","ok","All pipelines healthy. No action needed.","Every run passed today and every forecast is below the alert level.");
+  else setSummary("f","ok","All pipelines healthy. No action needed.","Every latest run passed and every forecast is below the alert level.");
   const healthy = rows.filter(r=>r.st.k==="ok").length;
-  $("#f-kpis").innerHTML = [[total,"pipelines watched",""],[failed.length,"failed today",failed.length?"bad":""],[alert.length,"may fail tomorrow",alert.length?"bad":""],[healthy,"healthy","ok"]]
+  $("#f-kpis").innerHTML = [[total,"pipelines watched",""],[failed.length,"failed in latest run",failed.length?"bad":""],[alert.length,"may fail next run",alert.length?"bad":""],[healthy,"healthy","ok"]]
     .map(([b,t,k])=>`<div class="panel kpi ${k}"><b>${b}</b><span>${t}</span></div>`).join("");
   $("#f-rows").innerHTML = rows.map(({P,st,d})=>{
     const col = st.k==="ok"?"var(--ok)":st.k==="warn"?"var(--warn)":"var(--bad)";
@@ -274,14 +275,14 @@ function renderDetail(){
   $("#d-name").innerHTML = `${esc(P.name)}${P.lowconf?`<span class="tag ex">LOW CONF.</span>`:""}`;
   $("#d-src").textContent = `${P.source} · run log: ${P.table} · owner: ${P.owner} · ${P.n_total.toLocaleString()} days tracked, ${P.fail_total} failures`;
   const why = (d.why||[])[0];
-  if(st.chip==="FAILED TODAY") setSummary("d","bad",`Failed today: ${likely(P).toLowerCase()}.`,`Tomorrow's risk is ${pc(d.p)}%. Fix today's run first; failures tend to repeat.`);
+  if(st.chip==="FAILED") setSummary("d","bad",`Latest run failed: ${likely(P).toLowerCase()}.`,`Risk for the next run (${nextDay()}) is ${pc(d.p)}%. Fix this run first; failures tend to repeat.`);
   else if(st.k==="bad") setSummary("d","bad",`May fail ${tomorrowName()} (${pc(d.p)}% risk).`,`Above the ${pc(TH)}% alert level${why?`, mainly: ${why.toLowerCase()}`:""}. Likely problem: ${likely(P).toLowerCase()}.`);
-  else if(st.k==="warn") setSummary("d","warn", P.lowconf&&d.p>=TH ? `Small warning for ${tomorrowName()} (${pc(d.p)}%).` : `Close to the alert level (${pc(d.p)}%).`, P.lowconf ? `Only ${P.dq_failures} past failures to learn from, so treat this as a rough guide.` : "No action yet. Keep an eye on tomorrow's run.");
-  else setSummary("d","ok",`Healthy. ${pc(d.p)}% risk tomorrow.`,"Today's run passed and the forecast is below the alert level." + (P.lowconf ? ` Only ${P.dq_failures} past failures to learn from, so treat forecasts as a rough guide.` : ""));
-  $("#d-kpis").innerHTML = [[pc(d.p)+"%","risk tomorrow",st.k==="ok"?"ok":st.k],[d.s==="F"?"✗ Failed":"✓ Passed","today's run",d.s==="F"?"bad":""],
+  else if(st.k==="warn") setSummary("d","warn", P.lowconf&&d.p>=TH ? `Small warning for ${nextDay()} (${pc(d.p)}%).` : `Close to the alert level (${pc(d.p)}%).`, P.lowconf ? `Only ${P.dq_failures} past failures to learn from, so treat this as a rough guide.` : "No action yet. Keep an eye on the next run.");
+  else setSummary("d","ok",`Healthy. ${pc(d.p)}% risk for ${nextDay()}.`,"The latest run passed and the forecast is below the alert level." + (P.lowconf ? ` Only ${P.dq_failures} past failures to learn from, so treat forecasts as a rough guide.` : ""));
+  $("#d-kpis").innerHTML = [[pc(d.p)+"%","risk, next run ("+nextDay()+")",st.k==="ok"?"ok":st.k],[d.s==="F"?"✗ Failed":"✓ Passed","latest run ("+fd(d.d,{weekday:"short",day:"numeric",month:"short"})+")",d.s==="F"?"bad":""],
     [s.f?`${s.c} of ${s.f}`:"0","failures warned a day early, 30 days",""],[s.fa,"false alarms, 30 days",""]]
     .map(([b,t,k])=>`<div class="panel kpi ${k}"><b>${b}</b><span>${t}</span></div>`).join("");
-  $("#d-why").innerHTML = (d.why&&d.why.length ? d.why.slice(0,3) : ["Nothing unusual today"]).map(w=>`<div class="reason"><b>↑</b><span>${esc(w)}</span></div>`).join("");
+  $("#d-why").innerHTML = (d.why&&d.why.length ? d.why.slice(0,3) : ["Nothing unusual in the latest run"]).map(w=>`<div class="reason"><b>↑</b><span>${esc(w)}</span></div>`).join("");
   chart(P); alerts(P); sigs(P);
 }
 function chart(P){
@@ -296,14 +297,14 @@ function chart(P){
   s+=`<path d="${path} L${x(pts.length-1)},${y(0)} L${x(0)},${y(0)}Z" fill="var(--blue)" opacity=".08"/><path d="${path}" fill="none" stroke="var(--blue)" stroke-width="1.8"/>`;
   pts.forEach((q,i)=>{ if(q.real&&q.real.s==="F") s+=`<circle cx="${x(i)}" cy="${y(q.p)}" r="4.5" fill="var(--bad)"><title>${fd(q.d)}: ${TYPES[q.real.t]||"failed"}</title></circle>`; });
   const li=pts.length-1;
-  s+=`<circle cx="${x(li)}" cy="${y(pts[li].p)}" r="6" fill="#fff" stroke="var(--blue)" stroke-width="2.5"/><text x="${x(li)+10}" y="${y(pts[li].p)+4}" style="fill:var(--ink);font-weight:600">${pc(pts[li].p)}%</text><text x="${x(li)+10}" y="${y(pts[li].p)+18}">tomorrow</text>`;
+  s+=`<circle cx="${x(li)}" cy="${y(pts[li].p)}" r="6" fill="#fff" stroke="var(--blue)" stroke-width="2.5"/><text x="${x(li)+10}" y="${y(pts[li].p)+4}" style="fill:var(--ink);font-weight:600">${pc(pts[li].p)}%</text><text x="${x(li)+10}" y="${y(pts[li].p)+18}">next run</text>`;
   [0,Math.round(li/3),Math.round(2*li/3),li].forEach(i=>{ s+=`<text x="${x(i)}" y="${H-8}" text-anchor="${i===0?"start":i===li?"end":"middle"}">${fd(pts[i].d)}</text>`; });
   $("#d-chart").innerHTML = s;
 }
 function alerts(P){
   const days=P.days, rows=[];
   for(let k=at;k>=Math.max(0,at-29);k--){ const d=days[k]; if(d.p<TH) continue;
-    const out = k+1<=at ? (isFail(days[k+1])?["bad","Came true"]:["grey","False alarm"]) : ["warn","Tomorrow"];
+    const out = k+1<=at ? (isFail(days[k+1])?["bad","Came true"]:["grey","False alarm"]) : ["warn","Upcoming"];
     rows.push(`<div class="arow"><span class="num">${fd(add(d.d,1))}</span><span class="num">${pc(d.p)}%</span><span><span class="chip ${out[0]}">${out[1]}</span></span></div>`); }
   const missed=[]; for(let k=Math.max(1,at-29);k<=at;k++) if(isFail(days[k]) && days[k-1].p<TH) missed.push(fd(days[k].d));
   $("#d-alerts").innerHTML = (rows.length?rows.slice(0,8).join(""):`<p class="empty">No alerts in the last 30 days.</p>`) + (missed.length?`<p class="empty" style="border-top:1px solid var(--grid)">Missed without warning: ${missed.join(", ")}</p>`:"");
