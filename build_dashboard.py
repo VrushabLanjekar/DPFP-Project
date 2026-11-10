@@ -5,9 +5,10 @@ Builds the Pipeline Radar dashboard from the latest data and model.
 
   1. Scores every watched pipeline with outputs/dpfp_model.joblib
      (risk that the NEXT day's run is a data-quality failure).
-  2. Appends today's forecast to outputs/forecast_log.csv, so every forecast
+  2. Adds a 3-day outlook (days t+2 and t+3) from horizon_models.py.
+  3. Appends today's forecasts to outputs/forecast_log.csv, so every forecast
      is kept exactly as it was made (honest, out-of-sample history).
-  3. Writes dashboard/data.json and a self-contained dashboard/index.html
+  4. Writes dashboard/data.json and a self-contained dashboard/index.html
      (data inlined, so the page opens by double-click or on any static host).
 
 Run after run_daily.py (the GitHub Action does this every morning):
@@ -25,6 +26,7 @@ import numpy as np
 import pandas as pd
 import yaml
 
+import horizon_models
 from retrain_weekly import _parse_run_dates
 
 HERE = Path(__file__).resolve().parent
@@ -112,7 +114,7 @@ def num(v, nd=3):
     return None if v is None or pd.isna(v) else round(float(v), nd)
 
 
-def build_pipeline(p, model, cols, med):
+def build_pipeline(p, model, cols, med, outlook):
     cfg = yaml.safe_load((HERE / p["config"]).read_text(encoding="utf-8"))
     log = HERE / cfg["logging"]["directory"] / "pipeline_runs.csv"
     raw = pd.read_csv(log)
@@ -124,6 +126,9 @@ def build_pipeline(p, model, cols, med):
     d, F = features(raw)
     X = F.reindex(columns=cols).fillna(pd.Series(med))
     risk = model.predict_proba(X)[:, 1]
+    # 3-day outlook: risk that the run for day t+h fails (h = 2, 3), same features
+    later = {h: m.predict_proba(F.reindex(columns=c).fillna(pd.Series(md)))[:, 1]
+             for h, (m, c, md) in outlook.items()}
 
     status = np.where(d["overall_status"].astype(str).str.upper() == "FAIL", "F",
                       np.where(d["warning_status"].fillna("NONE").astype(str).str.upper() == "WARNING", "W", "S"))
@@ -163,6 +168,7 @@ def build_pipeline(p, model, cols, med):
             "s": str(status[j]),
             "t": ("slow" if ft == "API_SLA_BREACH" else "bad") if status[j] == "F" else "",
             "p": num(risk[j]),
+            **{f"p{h}": num(later[h][j]) for h in later},
             "rows": num(rows.iloc[j], 0),
             "sig": [num(s.iloc[j]) for s in sig_cols],
             "why": why,
@@ -182,30 +188,41 @@ def build_pipeline(p, model, cols, med):
     }
 
 
-def log_forecasts(pipes, threshold):
-    """Keep every forecast exactly as made. One row per pipeline per data day."""
+def log_forecasts(pipes, threshold, horizons):
+    """Keep every forecast exactly as made: one row per pipeline, data day and days-ahead.
+    days_ahead 1 = next run (alerts use this one); 2 and 3 = outlook."""
     path = HERE / "outputs" / "forecast_log.csv"
-    log = pd.read_csv(path) if path.is_file() else pd.DataFrame(
-        columns=["made_from", "for_date", "pipeline", "risk", "alert", "logged_at"])
+    cols = ["made_from", "days_ahead", "for_date", "pipeline", "risk", "alert", "logged_at"]
+    log = pd.read_csv(path) if path.is_file() else pd.DataFrame(columns=cols)
+    if "days_ahead" not in log.columns:
+        log["days_ahead"] = 1  # rows written before the outlook existed
+    log["days_ahead"] = log["days_ahead"].fillna(1).astype(int)
     now = dt.datetime.now(IST).isoformat(timespec="seconds")
     new = []
     for p in pipes:
         last = p["days"][-1]
-        for_date = (dt.date.fromisoformat(last["d"]) + dt.timedelta(days=1)).isoformat()
-        if ((log["pipeline"] == p["id"]) & (log["made_from"] == last["d"])).any():
-            continue  # already logged this forecast; never overwrite it
-        new.append({"made_from": last["d"], "for_date": for_date, "pipeline": p["id"],
-                    "risk": last["p"], "alert": int(last["p"] >= threshold), "logged_at": now})
+        for h in (1,) + tuple(horizons):
+            key = "p" if h == 1 else f"p{h}"
+            done = ((log["pipeline"] == p["id"]) & (log["made_from"] == last["d"]) & (log["days_ahead"] == h)).any()
+            if done or last.get(key) is None:
+                continue  # already logged; never overwrite a forecast
+            for_date = (dt.date.fromisoformat(last["d"]) + dt.timedelta(days=h)).isoformat()
+            new.append({"made_from": last["d"], "days_ahead": h, "for_date": for_date, "pipeline": p["id"],
+                        "risk": last[key], "alert": int(h == 1 and last[key] >= threshold), "logged_at": now})
     if new:
-        log = pd.concat([log, pd.DataFrame(new)], ignore_index=True)
+        log = pd.concat([log, pd.DataFrame(new)], ignore_index=True)[cols]
         log.to_csv(path, index=False)
     # Use the logged (as-made) forecast wherever one exists.
     for p in pipes:
-        made = log[log["pipeline"] == p["id"]].set_index("made_from")["risk"].to_dict()
-        for day in p["days"]:
-            if day["d"] in made:
-                day["p"] = round(float(made[day["d"]]), 3)
-                day["logged"] = True
+        mine = log[log["pipeline"] == p["id"]]
+        for h in (1,) + tuple(horizons):
+            key = "p" if h == 1 else f"p{h}"
+            made = mine[mine["days_ahead"] == h].set_index("made_from")["risk"].to_dict()
+            for day in p["days"]:
+                if day["d"] in made:
+                    day[key] = round(float(made[day["d"]]), 3)
+                    if h == 1:
+                        day["logged"] = True
     return len(new)
 
 
@@ -215,8 +232,15 @@ def main():
     meta = json.loads((HERE / "outputs" / "dpfp_model_meta.json").read_text(encoding="utf-8"))
     threshold = float(meta["threshold"])
 
-    pipes = [build_pipeline(p, model, cols, med) for p in PIPELINES]
-    added = log_forecasts(pipes, threshold)
+    stamp = f"{art.get('trained_on')}|{art.get('n_rows')}"
+    horizon_scores = horizon_models.ensure(features, cols, stamp)
+    outlook = {}
+    for h in horizon_models.HORIZONS:
+        a = joblib.load(horizon_models.model_path(h))
+        outlook[h] = (a["model"], a["features"], a["medians"])
+
+    pipes = [build_pipeline(p, model, cols, med, outlook) for p in PIPELINES]
+    added = log_forecasts(pipes, threshold, outlook)
 
     # Align every pipeline to the same dates (the dashboard replays them together).
     common = sorted(set.intersection(*[{x["d"] for x in p["days"]} for p in pipes]))
@@ -230,6 +254,7 @@ def main():
         "data_through": common[-1],
         "model_trained": art.get("trained_on", meta.get("train_period", ["?"])[-1]),
         "required_columns": REQUIRED_COLUMNS,
+        "horizon_scores": horizon_scores,
         "performance": json.loads(perf.to_json(orient="records")),
         "pipelines": pipes,
     }

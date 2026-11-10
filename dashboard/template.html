@@ -124,6 +124,17 @@ svg text{fill:var(--muted);font-family:var(--mono);font-size:11px}
 .cols{display:grid;gap:6px;font-size:13.5px}
 .cols div{display:flex;justify-content:space-between;gap:10px;padding:6px 10px;border-radius:6px;background:var(--grid)}
 .cols div.y{background:var(--ok-soft)} .cols div.n{background:var(--bad-soft)}
+.ol{display:flex;gap:4px}
+.ol span{display:grid;gap:1px;min-width:52px;padding:4px 6px;border-radius:6px;background:var(--grid);font-size:11px;color:var(--muted);text-align:center}
+.ol span b{font:600 12.5px var(--mono);color:var(--ink)}
+.ol span.bad{background:var(--bad-soft)} .ol span.bad b{color:var(--bad)}
+.ol span.warn{background:var(--warn-soft)} .ol span.warn b{color:#a26800}
+.outlook{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}
+@media(max-width:620px){.outlook{grid-template-columns:1fr}}
+.oday{border:1px solid var(--line);border-radius:10px;padding:14px 16px;display:grid;gap:4px}
+.oday .when{font-size:13px;color:var(--muted)}
+.oday b{font:600 26px var(--mono)}
+.oday.bad{border-color:#f3c4bf;background:var(--bad-soft)} .oday.warn{border-color:#f0d9a8;background:var(--warn-soft)}
 .foot{font-size:12.5px;color:var(--muted);max-width:95ch}
 @media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
 </style>
@@ -148,7 +159,7 @@ svg text{fill:var(--muted);font-family:var(--mono);font-size:11px}
     <section class="kpis" id="f-kpis"></section>
     <section class="panel tbl-wrap">
       <table>
-        <thead><tr><th>Pipeline</th><th>Status</th><th>Risk, next run</th><th>Likely problem</th><th>Last 14 days</th><th>Signals</th><th>Owner</th></tr></thead>
+        <thead><tr><th>Pipeline</th><th>Status</th><th>Risk, next run</th><th>Next 3 days</th><th>Likely problem</th><th>Last 14 days</th><th>Signals</th><th>Owner</th></tr></thead>
         <tbody id="f-rows"></tbody>
       </table>
       <div class="legend"><span>Signals, left to right: missing rows · data drift · source speed · sudden jumps</span><span><i class="d-ok"></i>normal</span><span><i class="d-warn"></i>above usual</span><span><i class="d-bad"></i>high</span></div>
@@ -161,6 +172,11 @@ svg text{fill:var(--muted);font-family:var(--mono);font-size:11px}
     <div class="dhead"><div style="display:grid;gap:4px"><button class="link" id="back">← All pipelines</button><h2 id="d-name"></h2><p id="d-src"></p></div></div>
     <section class="summary" id="d-sum"><div class="ic" id="d-ic"></div><div><h2 id="d-h"></h2><p id="d-p"></p></div></section>
     <section class="kpis" id="d-kpis"></section>
+    <section class="panel">
+      <div class="phead"><h3>3-day outlook</h3><span id="d-ol-sub"></span></div>
+      <div class="outlook" id="d-ol"></div>
+      <p class="foot" id="d-ol-note" style="margin-top:10px"></p>
+    </section>
     <section class="main">
       <div class="panel">
         <div class="phead"><h3>Risk of a failure, day by day</h3><span>Dashed line = alert level · red dot = real failure</span></div>
@@ -230,6 +246,26 @@ function likely(P){ const d = P.days[at]; if(d.s==="F") return TYPES[d.t]||"Fail
 function sigState(P,k,v){ const [m,h]=P.norm[k]; if(v==null) return "grey"; if(v>h) return "bad"; if(v>m*1.25 && v>m+0.01) return "warn"; return "ok"; }
 function stats(P){ const lo=Math.max(1,at-29); let f=0,c=0,fa=0; for(let k=lo;k<=at;k++){ const d=P.days[k], pr=P.days[k-1];
   if(isFail(d)){ f++; if(pr.p>=TH) c++; } if(pr.p>=TH && !isFail(d)) fa++; } return {f,c,fa}; }
+const HS = Object.fromEntries((D.horizon_scores||[]).map(r=>[r.days_ahead, r]));
+const _typ = {};
+function typical(P,h){ const key = P.id+h; if(!(key in _typ)){ const v = P.days.map(d=>h===1?d.p:d["p"+h]).filter(x=>x!=null).sort((a,b)=>a-b); _typ[key] = v.length ? v[Math.floor(v.length/2)] : 0.05; } return _typ[key]; }
+function outlook(P){
+  const d = P.days[at], st = state(P);
+  return [1,2,3].map(h=>{ const p = h===1 ? d.p : d["p"+h]; if(p==null) return null;
+    const usual = typical(P,h), high = p >= usual*1.5;
+    const k = h===1 ? (st.k==="ok" ? "" : st.k) : (high ? "warn" : "");
+    const lbl = h===1 ? (st.chip==="FAILED" ? "next run" : st.chip==="OK" ? "below alert level" : st.chip.toLowerCase()) : (high ? "higher than usual" : "about usual");
+    return {h, date: add(DATES[at],h), p, k, lbl, usual};
+  }).filter(Boolean);
+}
+function olCells(P){ return `<span class="ol">${outlook(P).map(o=>`<span class="${o.k}" title="${o.h===1?"next run":o.h+" days ahead, weak signal"} · usual ${pc(o.usual)}%">${fd(o.date)}<b>${pc(o.p)}%</b></span>`).join("")}</span>`; }
+function renderOutlook(P){
+  const o = outlook(P);
+  $("#d-ol-sub").textContent = "risk that each day's run fails";
+  $("#d-ol").innerHTML = o.map(x=>`<div class="oday ${x.k}"><span class="when">${fd(x.date,{weekday:"short",day:"numeric",month:"short"})} · ${x.h===1?"next run":x.h+" days ahead"}</span><b>${pc(x.p)}%</b><span class="when">usual for this pipeline: ${pc(x.usual)}%</span><span class="chip ${x.k||"grey"}" style="justify-self:start">${x.lbl}</span>${x.h>1?`<span class="when">weak signal${P.lowconf?", low confidence":""}</span>`:""}</div>`).join("");
+  const L = h => HS[h] ? HS[h].lift.toFixed(1)+"×" : "?";
+  $("#d-ol-note").textContent = `Measured on held-out past data (Delhi): the next-run forecast is ${L(1)} better than guessing, 2 days ahead ${L(2)}, 3 days ahead ${L(3)}. Each day has its own model, so compare a day with its own usual level rather than with the other days. Only the next run can raise an alert. Further than 3 days is close to guessing, so it is not shown.`;
+}
 const nextDay = () => fd(add(DATES[at],1),{weekday:"short",day:"numeric",month:"short"});
 const tomorrowName = () => "on "+nextDay();
 
@@ -262,6 +298,7 @@ function renderFleet(){
       <td><div class="pname">${esc(P.name)}${P.lowconf?`<span class="tag ex" title="Fewer than 30 past failures to learn from">LOW CONF.</span>`:""}</div><div class="psrc">${esc(P.source)}</div></td>
       <td><span class="chip ${st.k}">${st.chip}</span></td>
       <td><div class="rcell"><span class="num" style="width:44px">${pc(d.p)}%</span><span class="rbar"><b style="width:${Math.min(d.p/.4,1)*100}%;background:${col}"></b><u style="left:${TH/.4*100}%"></u></span></div></td>
+      <td>${olCells(P)}</td>
       <td>${likely(P)}</td>
       <td><span class="strip">${strip}</span></td>
       <td><span class="dots">${dots}</span></td>
@@ -283,7 +320,7 @@ function renderDetail(){
     [s.f?`${s.c} of ${s.f}`:"0","failures warned a day early, 30 days",""],[s.fa,"false alarms, 30 days",""]]
     .map(([b,t,k])=>`<div class="panel kpi ${k}"><b>${b}</b><span>${t}</span></div>`).join("");
   $("#d-why").innerHTML = (d.why&&d.why.length ? d.why.slice(0,3) : ["Nothing unusual in the latest run"]).map(w=>`<div class="reason"><b>↑</b><span>${esc(w)}</span></div>`).join("");
-  chart(P); alerts(P); sigs(P);
+  renderOutlook(P); chart(P); alerts(P); sigs(P);
 }
 function chart(P){
   const days = P.days, lo = Math.max(1, at-89), pts=[];
