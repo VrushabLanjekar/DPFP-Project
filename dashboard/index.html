@@ -1,0 +1,370 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>DPFP Pipeline Radar</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap">
+<style>
+/* Layout: control-room app. Fleet table is home; a row opens that pipeline's page; "Add pipeline" checks a run log. Light-only by design. */
+:root{
+  --page:#f2f4f6; --panel:#ffffff; --ink:#16202a; --muted:#66727e; --faint:#98a2ac; --line:#dfe3e8; --grid:#eef1f4;
+  --blue:#2b5fd9; --blue-soft:#eaf0fc;
+  --ok:#1d9a68; --ok-soft:#e6f5ee; --warn:#cf8500; --warn-soft:#fcf2de; --bad:#d8433a; --bad-soft:#fcebe9;
+  --sans:"IBM Plex Sans","Segoe UI",system-ui,sans-serif; --mono:"IBM Plex Mono",ui-monospace,Consolas,monospace;
+  color-scheme:light;
+}
+*{box-sizing:border-box}
+body{background:var(--page);color:var(--ink);font:14px/1.5 var(--sans);
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:18px 40px}
+.wrap{max-width:1240px;margin:0 auto;display:grid;gap:14px}
+h1,h2,h3{margin:0;letter-spacing:-.005em} p{margin:0}
+.num{font-family:var(--mono);font-variant-numeric:tabular-nums}
+.label{font:600 11px/1.2 var(--mono);letter-spacing:.09em;text-transform:uppercase;color:var(--muted)}
+.panel{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px 18px;min-width:0}
+[hidden]{display:none!important}
+
+.top{display:flex;flex-wrap:wrap;gap:12px;align-items:center;justify-content:space-between}
+.title{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+.title h1{font-size:19px;font-weight:700}
+.live{display:inline-flex;align-items:center;gap:7px;font:600 11.5px var(--mono);letter-spacing:.08em;padding:5px 10px;border-radius:99px;background:var(--ok-soft);color:var(--ok)}
+.live i{width:8px;height:8px;border-radius:50%;background:currentColor;animation:pulse 1.6s infinite}
+.live.replay{background:var(--blue-soft);color:var(--blue)}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.25}}
+.asof{font-size:13px;color:var(--muted)}
+.actions{display:flex;gap:8px;flex-wrap:wrap}
+.btn{all:unset;cursor:pointer;display:inline-flex;align-items:center;gap:8px;font-weight:600;font-size:14px;padding:9px 15px;border-radius:8px;background:var(--ink);color:#fff}
+.btn.ghost{background:var(--panel);color:var(--ink);border:1px solid var(--line)}
+.btn.stop{background:var(--bad)}
+.btn:focus-visible,.link:focus-visible{outline:2px solid var(--blue);outline-offset:2px}
+.link{all:unset;cursor:pointer;color:var(--blue);font-weight:600;font-size:14px}
+
+.summary{display:flex;gap:14px;align-items:center;padding:16px 18px;border-radius:10px;border:1px solid}
+.summary .ic{flex:none;width:38px;height:38px;border-radius:50%;display:grid;place-items:center;color:#fff;font-weight:700;font-size:19px}
+.summary h2{font-size:clamp(17px,2.2vw,21px);font-weight:700;text-wrap:balance}
+.summary p{color:var(--muted);font-size:13.5px}
+.summary.ok{background:var(--ok-soft);border-color:#bfe4d3} .summary.ok .ic{background:var(--ok)}
+.summary.warn{background:var(--warn-soft);border-color:#f0d9a8} .summary.warn .ic{background:var(--warn)}
+.summary.bad{background:var(--bad-soft);border-color:#f3c4bf} .summary.bad .ic{background:var(--bad)}
+
+.kpis{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:14px}
+@media(max-width:860px){.kpis{grid-template-columns:repeat(2,minmax(0,1fr))}}
+.kpi{display:grid;gap:4px}
+.kpi b{font:600 28px/1.1 var(--mono)}
+.kpi span{font-size:13px;color:var(--muted)}
+.kpi.bad b{color:var(--bad)} .kpi.warn b{color:var(--warn)} .kpi.ok b{color:var(--ok)}
+
+.chip{display:inline-block;font:600 11.5px var(--mono);letter-spacing:.04em;padding:4px 9px;border-radius:99px;white-space:nowrap}
+.chip.ok{background:var(--ok-soft);color:var(--ok)} .chip.warn{background:var(--warn-soft);color:#a26800} .chip.bad{background:var(--bad-soft);color:var(--bad)} .chip.grey{background:var(--grid);color:var(--muted)}
+.tag{font:600 10px var(--mono);letter-spacing:.08em;padding:2px 6px;border-radius:4px;vertical-align:1px;margin-left:6px}
+.tag.real{background:var(--blue-soft);color:var(--blue)} .tag.ex{background:var(--grid);color:var(--muted)}
+
+/* fleet table */
+.tbl-wrap{overflow-x:auto;padding:0}
+table{width:100%;border-collapse:collapse;min-width:880px}
+th{font:600 11px var(--mono);letter-spacing:.08em;text-transform:uppercase;color:var(--muted);text-align:left;padding:12px 14px;border-bottom:1px solid var(--line);white-space:nowrap}
+td{padding:12px 14px;border-bottom:1px solid var(--grid);vertical-align:middle}
+tbody tr{cursor:pointer}
+tbody tr:hover{background:#f8fafc}
+tbody tr:focus-visible{outline:2px solid var(--blue);outline-offset:-2px}
+tbody tr:last-child td{border-bottom:0}
+.pname{font-weight:600}
+.psrc{font-size:12.5px;color:var(--muted)}
+.rcell{display:flex;align-items:center;gap:10px;min-width:150px}
+.rbar{flex:1;height:7px;background:var(--grid);border-radius:99px;position:relative;min-width:70px}
+.rbar b{position:absolute;inset:0 auto 0 0;border-radius:99px;transition:width .4s}
+.rbar u{position:absolute;top:-3px;bottom:-3px;width:2px;background:var(--ink);opacity:.5}
+.strip{display:flex;gap:2px;align-items:center}
+.strip i{width:7px;height:16px;border-radius:2px}
+.s-S{background:#cfe9dc} .s-W{background:#f3d796} .s-F{background:var(--bad)}
+.dots{display:flex;gap:6px}
+.dots i{width:10px;height:10px;border-radius:50%}
+.d-ok{background:#bfe4d3} .d-warn{background:var(--warn)} .d-bad{background:var(--bad)}
+.legend{display:flex;flex-wrap:wrap;gap:16px;font-size:12.5px;color:var(--muted);padding:10px 14px;border-top:1px solid var(--line)}
+.legend i{display:inline-block;width:9px;height:9px;border-radius:50%;margin-right:6px}
+
+/* detail */
+.dhead{display:flex;flex-wrap:wrap;gap:10px 18px;align-items:center;justify-content:space-between}
+.dhead h2{font-size:22px}
+.dhead p{color:var(--muted);font-size:13.5px}
+.main{display:grid;grid-template-columns:minmax(0,1fr) 330px;gap:14px}
+@media(max-width:980px){.main{grid-template-columns:1fr}}
+.phead{display:flex;justify-content:space-between;align-items:baseline;gap:10px;flex-wrap:wrap;margin-bottom:10px}
+.phead h3{font-size:15px}
+.phead span{font-size:12.5px;color:var(--muted)}
+.chart{overflow-x:auto}
+svg text{fill:var(--muted);font-family:var(--mono);font-size:11px}
+.arow{display:grid;grid-template-columns:64px 54px minmax(0,1fr);gap:10px;align-items:center;padding:8px 0;border-bottom:1px solid var(--grid);font-size:13.5px}
+.arow:last-child{border-bottom:0}
+.empty{color:var(--muted);font-size:13.5px;padding:8px 0}
+.reasons{display:grid;gap:10px}
+.reason{display:flex;gap:10px;align-items:flex-start;font-size:14px}
+.reason b{flex:none;width:22px;height:22px;border-radius:6px;display:grid;place-items:center;font-size:12px;background:var(--bad-soft);color:var(--bad)}
+.sigs{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:14px}
+@media(max-width:980px){.sigs{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media(max-width:520px){.sigs{grid-template-columns:1fr}}
+.sig{display:grid;gap:6px}
+.sig .row{display:flex;justify-content:space-between;align-items:center;gap:8px}
+.sig h3{font-size:14px;font-weight:600}
+.sig .v{font:600 20px var(--mono)}
+.sig .v small{font-size:12px;color:var(--muted);font-weight:400}
+.sig p{font-size:12.5px;color:var(--muted)}
+
+/* add */
+.steps{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}
+@media(max-width:860px){.steps{grid-template-columns:1fr}}
+.step{display:grid;gap:10px;align-content:start}
+.step .n{width:26px;height:26px;border-radius:50%;background:var(--ink);color:#fff;display:grid;place-items:center;font:600 13px var(--mono)}
+.field{display:grid;gap:5px}
+.field label{font-size:13px;font-weight:600}
+.field input[type=text]{font:14px var(--sans);padding:9px 11px;border:1px solid var(--line);border-radius:8px;width:100%}
+.field input:focus-visible{outline:2px solid var(--blue);outline-offset:0}
+.drop{border:1.5px dashed var(--line);border-radius:10px;padding:18px;text-align:center;color:var(--muted);font-size:13.5px;display:grid;gap:8px;justify-items:center}
+.cols{display:grid;gap:6px;font-size:13.5px}
+.cols div{display:flex;justify-content:space-between;gap:10px;padding:6px 10px;border-radius:6px;background:var(--grid)}
+.cols div.y{background:var(--ok-soft)} .cols div.n{background:var(--bad-soft)}
+.foot{font-size:12.5px;color:var(--muted);max-width:95ch}
+@media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header class="top">
+    <div class="title">
+      <h1>Pipeline Radar</h1>
+      <span class="live" id="live"><i></i><span id="live-t">LIVE</span></span>
+      <span class="asof" id="asof"></span>
+    </div>
+    <div class="actions">
+      <button class="btn ghost" id="add-btn">+ Add pipeline</button>
+      <button class="btn" id="replay">▶ Replay last 30 days</button>
+    </div>
+  </header>
+
+  <!-- FLEET -->
+  <div id="v-fleet" style="display:grid;gap:14px">
+    <section class="summary" id="f-sum" aria-live="polite"><div class="ic" id="f-ic"></div><div><h2 id="f-h"></h2><p id="f-p"></p></div></section>
+    <section class="kpis" id="f-kpis"></section>
+    <section class="panel tbl-wrap">
+      <table>
+        <thead><tr><th>Pipeline</th><th>Status</th><th>Risk tomorrow</th><th>Likely problem</th><th>Last 14 days</th><th>Signals</th><th>Owner</th></tr></thead>
+        <tbody id="f-rows"></tbody>
+      </table>
+      <div class="legend"><span>Signals, left to right: missing rows · data drift · source speed · sudden jumps</span><span><i class="d-ok"></i>normal</span><span><i class="d-warn"></i>above usual</span><span><i class="d-bad"></i>high</span></div>
+    </section>
+    <p class="foot" id="f-foot"></p>
+  </div>
+
+  <!-- DETAIL -->
+  <div id="v-detail" style="display:grid;gap:14px" hidden>
+    <div class="dhead"><div style="display:grid;gap:4px"><button class="link" id="back">← All pipelines</button><h2 id="d-name"></h2><p id="d-src"></p></div></div>
+    <section class="summary" id="d-sum"><div class="ic" id="d-ic"></div><div><h2 id="d-h"></h2><p id="d-p"></p></div></section>
+    <section class="kpis" id="d-kpis"></section>
+    <section class="main">
+      <div class="panel">
+        <div class="phead"><h3>Risk of a failure, day by day</h3><span>Dashed line = alert level · red dot = real failure</span></div>
+        <div class="chart"><svg id="d-chart" viewBox="0 0 860 240" width="100%" style="min-width:540px" role="img" aria-label="Daily failure risk"></svg></div>
+      </div>
+      <div style="display:grid;gap:14px;align-content:start">
+        <div class="panel"><div class="phead"><h3>Why this risk</h3></div><div class="reasons" id="d-why"></div></div>
+        <div class="panel"><div class="phead"><h3>Alert log</h3><span>last 30 days</span></div><div id="d-alerts"></div></div>
+      </div>
+    </section>
+    <section class="sigs" id="d-sigs"></section>
+  </div>
+
+  <!-- ADD -->
+  <div id="v-add" style="display:grid;gap:14px" hidden>
+    <div class="dhead"><div style="display:grid;gap:4px"><button class="link" id="back2">← All pipelines</button><h2>Add a pipeline</h2><p>Check a pipeline's run log here, then add it to the repo. The next morning's job starts watching it.</p></div></div>
+    <form class="steps" id="add-form">
+      <div class="panel step"><span class="n">1</span><h3>Check its run log</h3>
+        <p style="color:var(--muted);font-size:13.5px">A CSV with one row per run. It needs the same columns the DPFP pipeline writes.</p>
+        <div class="drop"><span>Choose a CSV to check its columns</span><input type="file" id="a-file" accept=".csv,text/csv"></div>
+        <p id="a-msg" style="font-size:13.5px" aria-live="polite"></p>
+        <div class="cols" id="a-cols"></div>
+      </div>
+      <div class="panel step"><span class="n">2</span><h3>Describe it</h3>
+        <div class="field"><label for="a-name">Pipeline name</label><input type="text" id="a-name" value="air_quality_mumbai"></div>
+        <div class="field"><label for="a-src">Source</label><input type="text" id="a-src" value="Open-Meteo air-quality API, Mumbai"></div>
+        <div class="field"><label for="a-cfg">Config file</label><input type="text" id="a-cfg" value="config/config_mumbai.yaml"></div>
+        <div class="field"><label for="a-owner">Owner team</label><input type="text" id="a-owner" value="DPFP project"></div>
+      </div>
+      <div class="panel step"><span class="n">3</span><h3>Add it to the repo</h3>
+        <p style="color:var(--muted);font-size:13.5px">Paste this into <span class="num">PIPELINES</span> in <span class="num">build_dashboard.py</span> and push. It appears here after the next daily run. Forecasts are marked low confidence until it has 30 failures to learn from.</p>
+        <pre id="a-snip" class="num" style="white-space:pre-wrap;background:var(--grid);border-radius:8px;padding:12px;font-size:12.5px;margin:0;overflow-x:auto"></pre>
+        <button class="btn" type="submit" style="justify-self:start">Copy entry</button>
+        <p id="a-copy" style="font-size:13.5px" aria-live="polite"></p>
+      </div>
+    </form>
+  </div>
+</div>
+
+<script>
+const D = {"threshold":0.1163220089075838,"built_at":"2026-11-10T19:53+05:30","data_through":"2026-11-09","model_trained":"2026-11-10","required_columns":["run_date","start_time","overall_status","failure_type","warning_status","warning_reason","rows_processed","drift_psi_mean","drift_psi_max","max_hourly_jump","max_stagnation_run","invalid_value_count","freshness_lag_hours","rows_vs_expected_ratio","hazard_exceed_count","duration_seconds","duration_vs_baseline","api_latency_mean","api_latency_vs_baseline","api_latency_roll7_std"],"performance":[{"retrain_date":"2026-11-08","data_through":"2026-11-07","n_rows":1526,"n_failures":129,"fail_rate":0.0845,"test_PR_AUC":0.3062,"test_ROC_AUC":0.676,"base_rate":0.1242},{"retrain_date":"2026-11-09","data_through":"2026-11-07","n_rows":1556,"n_failures":130,"fail_rate":0.0835,"test_PR_AUC":0.1312,"test_ROC_AUC":0.5844,"base_rate":0.0897},{"retrain_date":"2026-11-10","data_through":"2026-11-08","n_rows":1557,"n_failures":130,"fail_rate":0.0835,"test_PR_AUC":0.3282,"test_ROC_AUC":0.7318,"base_rate":0.1103}],"pipelines":[{"id":"delhi","name":"air_quality_delhi","source":"Open-Meteo air-quality API, Delhi","table":"logs/delhi_runs","owner":"DPFP project","real":true,"lowconf":false,"dq_failures":130,"n_total":1558,"fail_total":133,"fail_before":123,"norm":[[0.0,4.0],[5.518,7.89],[0.97,1.121],[343.0,873.6]],"days":[{"d":"2026-07-13","s":"W","t":"","p":0.228,"rows":24.0,"sig":[0.0,7.768,1.052,641.0],"why":["Extreme readings","Sudden jumps in readings","Data looks unusual this week"]},{"d":"2026-07-14","s":"F","t":"bad","p":0.27,"rows":24.0,"sig":[0.0,4.734,1.861,328.8],"why":["Today's run failed","A failure happened recently","Invalid values"]},{"d":"2026-07-15","s":"W","t":"","p":0.132,"rows":24.0,"sig":[0.0,6.012,0.958,535.0],"why":["Extreme readings","Sudden jumps in readings","Many sudden jumps this week"]},{"d":"2026-07-16","s":"W","t":"","p":0.208,"rows":24.0,"sig":[0.0,6.165,0.996,364.0],"why":["Extreme readings","Many sudden jumps this week","Source speed is unstable"]},{"d":"2026-07-17","s":"F","t":"bad","p":0.318,"rows":24.0,"sig":[0.0,6.015,1.257,549.5],"why":["Extreme readings","Today's run failed","A failure happened recently"]},{"d":"2026-07-18","s":"F","t":"bad","p":0.271,"rows":24.0,"sig":[0.0,5.564,0.997,424.6],"why":["Today's run failed","A failure happened recently","Invalid values"]},{"d":"2026-07-19","s":"W","t":"","p":0.136,"rows":24.0,"sig":[0.0,6.121,0.989,216.1],"why":["Failed recently; failures come in groups","A failure happened recently","Extreme readings"]},{"d":"2026-07-20","s":"F","t":"bad","p":0.247,"rows":24.0,"sig":[0.0,7.986,0.993,369.0],"why":["Today's run failed","A failure happened recently","Invalid values"]},{"d":"2026-07-21","s":"S","t":"","p":0.131,"rows":24.0,"sig":[0.0,6.803,1.959,263.0],"why":["A failure happened recently","Failed recently; failures come in groups","Source speed changed"]},{"d":"2026-07-22","s":"W","t":"","p":0.07,"rows":24.0,"sig":[0.0,6.982,0.979,252.0],"why":["Failed recently; failures come in groups","Source speed changed","Source speed is unstable"]},{"d":"2026-07-23","s":"S","t":"","p":0.071,"rows":24.0,"sig":[0.0,7.628,1.081,133.0],"why":["Failed recently; failures come in groups","Source speed is unstable","A failure happened recently"]},{"d":"2026-07-24","s":"S","t":"","p":0.054,"rows":24.0,"sig":[0.0,7.385,0.933,263.0],"why":["Failed recently; failures come in groups","Source speed is unstable","Source speed changed"]},{"d":"2026-07-25","s":"S","t":"","p":0.045,"rows":24.0,"sig":[0.0,6.301,0.905,88.0],"why":["Source speed is unstable","Source speed changed","Failed recently; failures come in groups"]},{"d":"2026-07-26","s":"W","t":"","p":0.075,"rows":24.0,"sig":[0.0,5.286,1.009,509.0],"why":["Sudden jumps in readings","Source speed is unstable","Data looks unusual this week"]},{"d":"2026-07-27","s":"W","t":"","p":0.065,"rows":24.0,"sig":[0.0,8.275,0.933,420.0],"why":["Sudden jumps in readings","Source speed is unstable","Data looks unusual this week"]},{"d":"2026-07-28","s":"W","t":"","p":0.05,"rows":24.0,"sig":[0.0,4.816,0.964,453.0],"why":["Sudden jumps in readings","Source speed changed","Data looks unusual this week"]},{"d":"2026-07-29","s":"W","t":"","p":0.064,"rows":24.0,"sig":[0.0,5.253,1.01,552.0],"why":["Sudden jumps in readings","Time of year: failures are more common now"]},{"d":"2026-07-30","s":"W","t":"","p":0.033,"rows":24.0,"sig":[0.0,4.477,0.975,371.0],"why":["Sudden jumps in readings","Data looks different from normal"]},{"d":"2026-07-31","s":"S","t":"","p":0.031,"rows":24.0,"sig":[0.0,6.927,1.096,107.4],"why":["Source speed changed"]},{"d":"2026-08-01","s":"W","t":"","p":0.035,"rows":24.0,"sig":[0.0,6.068,0.941,216.6],"why":["A sensor got stuck"]},{"d":"2026-08-02","s":"W","t":"","p":0.025,"rows":24.0,"sig":[0.0,6.079,0.94,195.0],"why":[]},{"d":"2026-08-03","s":"S","t":"","p":0.021,"rows":24.0,"sig":[0.0,4.949,1.064,230.0],"why":[]},{"d":"2026-08-04","s":"S","t":"","p":0.034,"rows":24.0,"sig":[0.0,3.844,1.172,257.0],"why":["Data looks different from normal","Source speed changed"]},{"d":"2026-08-05","s":"W","t":"","p":0.054,"rows":24.0,"sig":[0.0,4.058,1.943,254.0],"why":["Source speed is unstable","Slow run","Source speed changed"]},{"d":"2026-08-06","s":"S","t":"","p":0.032,"rows":24.0,"sig":[0.0,4.601,0.947,266.0],"why":["Source speed is unstable"]},{"d":"2026-08-07","s":"S","t":"","p":0.032,"rows":24.0,"sig":[0.0,5.525,0.935,244.0],"why":["Source speed is unstable","Source speed changed"]},{"d":"2026-08-08","s":"S","t":"","p":0.036,"rows":24.0,"sig":[0.0,4.451,0.957,328.0],"why":["Source speed is unstable"]},{"d":"2026-08-09","s":"W","t":"","p":0.082,"rows":24.0,"sig":[0.0,3.469,0.962,492.0],"why":["Sudden jumps in readings","Source speed is unstable","Extreme readings"]},{"d":"2026-08-10","s":"W","t":"","p":0.039,"rows":24.0,"sig":[0.0,3.946,0.94,306.0],"why":["Source speed is unstable"]},{"d":"2026-08-11","s":"W","t":"","p":0.074,"rows":24.0,"sig":[0.0,5.918,0.933,655.0],"why":["Sudden jumps in readings","Source speed is unstable","Time of year: failures are more common now"]},{"d":"2026-08-12","s":"W","t":"","p":0.082,"rows":24.0,"sig":[0.0,6.6,0.977,1117.0],"why":["Sudden jumps in readings","Many sudden jumps this week","Time of year: failures are more common now"]},{"d":"2026-08-13","s":"W","t":"","p":0.038,"rows":24.0,"sig":[0.0,3.965,0.935,363.0],"why":["Many sudden jumps this week","Data looks different from normal","Sudden jumps in readings"]},{"d":"2026-08-14","s":"W","t":"","p":0.073,"rows":24.0,"sig":[0.0,4.609,1.107,464.0],"why":["Sudden jumps in readings","Many sudden jumps this week","Source speed changed"]},{"d":"2026-08-15","s":"W","t":"","p":0.05,"rows":24.0,"sig":[0.0,4.565,1.07,357.0],"why":["Many sudden jumps this week","Sudden jumps in readings","Data looks different from normal"]},{"d":"2026-08-16","s":"W","t":"","p":0.034,"rows":24.0,"sig":[0.0,8.085,0.99,227.0],"why":["Many sudden jumps this week","Extreme readings"]},{"d":"2026-08-17","s":"W","t":"","p":0.034,"rows":24.0,"sig":[0.0,5.021,0.975,215.0],"why":["Many sudden jumps this week","Time of year: failures are more common now"]},{"d":"2026-08-18","s":"W","t":"","p":0.031,"rows":24.0,"sig":[0.0,5.372,0.933,337.0],"why":["Many sudden jumps this week"]},{"d":"2026-08-19","s":"W","t":"","p":0.054,"rows":24.0,"sig":[0.0,5.609,0.946,675.0],"why":["Sudden jumps in readings","Time of year: failures are more common now"]},{"d":"2026-08-20","s":"W","t":"","p":0.031,"rows":24.0,"sig":[0.0,5.534,1.101,364.0],"why":["Sudden jumps in readings"]},{"d":"2026-08-21","s":"W","t":"","p":0.029,"rows":24.0,"sig":[0.0,5.779,0.923,359.0],"why":[]},{"d":"2026-08-22","s":"W","t":"","p":0.068,"rows":24.0,"sig":[0.0,5.305,0.97,470.0],"why":["Sudden jumps in readings","Extreme readings","Slow run"]},{"d":"2026-08-23","s":"F","t":"bad","p":0.218,"rows":24.0,"sig":[0.0,6.741,0.924,429.0],"why":["Today's run failed","A failure happened recently","Invalid values"]},{"d":"2026-08-24","s":"W","t":"","p":0.122,"rows":24.0,"sig":[0.0,5.299,0.885,1033.0],"why":["Sudden jumps in readings","Many sudden jumps this week","A failure happened recently"]},{"d":"2026-08-25","s":"W","t":"","p":0.098,"rows":24.0,"sig":[0.0,6.624,1.07,845.0],"why":["Sudden jumps in readings","Many sudden jumps this week","Source speed changed"]},{"d":"2026-08-26","s":"W","t":"","p":0.128,"rows":24.0,"sig":[0.0,7.709,1.271,701.0],"why":["Sudden jumps in readings","Source speed changed","Many sudden jumps this week"]},{"d":"2026-08-27","s":"W","t":"","p":0.173,"rows":24.0,"sig":[0.0,4.109,0.924,848.0],"why":["Sudden jumps in readings","Many sudden jumps this week","Data looks different from normal"]},{"d":"2026-08-28","s":"F","t":"bad","p":0.216,"rows":24.0,"sig":[0.0,6.767,0.953,603.0],"why":["Today's run failed","Invalid values","A failure happened recently"]},{"d":"2026-08-29","s":"W","t":"","p":0.154,"rows":24.0,"sig":[0.0,7.319,1.002,348.0],"why":["Extreme readings","A failure happened recently","Source is slow"]},{"d":"2026-08-30","s":"W","t":"","p":0.108,"rows":24.0,"sig":[0.0,6.298,1.859,220.0],"why":["Extreme readings","Source speed is unstable","Source speed changed"]},{"d":"2026-08-31","s":"W","t":"","p":0.113,"rows":24.0,"sig":[0.0,6.156,0.973,467.0],"why":["Extreme readings","Many sudden jumps this week","Source speed changed"]},{"d":"2026-09-01","s":"W","t":"","p":0.109,"rows":24.0,"sig":[0.0,0.0,0.929,612.0],"why":["Sudden jumps in readings","Data looks different from normal","Many sudden jumps this week"]},{"d":"2026-09-02","s":"W","t":"","p":0.028,"rows":24.0,"sig":[0.0,11.513,0.989,182.0],"why":["Failed recently; failures come in groups"]},{"d":"2026-09-03","s":"S","t":"","p":0.029,"rows":24.0,"sig":[0.0,9.21,1.016,137.0],"why":["Failed recently; failures come in groups","Data looks unusual this week"]},{"d":"2026-09-04","s":"S","t":"","p":0.025,"rows":24.0,"sig":[0.0,9.6,1.021,142.0],"why":["Source speed changed","Data looks unusual this week"]},{"d":"2026-09-05","s":"W","t":"","p":0.055,"rows":24.0,"sig":[0.0,7.82,1.023,714.0],"why":["Sudden jumps in readings","Data looks unusual this week"]},{"d":"2026-09-06","s":"W","t":"","p":0.052,"rows":24.0,"sig":[0.0,6.203,0.981,551.0],"why":["Sudden jumps in readings","Data looks unusual this week","A sensor got stuck"]},{"d":"2026-09-07","s":"W","t":"","p":0.066,"rows":24.0,"sig":[0.0,8.19,0.94,872.0],"why":["Sudden jumps in readings","Data looks unusual this week","Many sudden jumps this week"]},{"d":"2026-09-08","s":"W","t":"","p":0.027,"rows":24.0,"sig":[0.0,4.013,0.92,243.0],"why":["Data looks unusual this week"]},{"d":"2026-09-09","s":"W","t":"","p":0.04,"rows":24.0,"sig":[0.0,7.915,0.953,385.0],"why":["Sudden jumps in readings","Data looks unusual this week","Extreme readings"]},{"d":"2026-09-10","s":"W","t":"","p":0.092,"rows":24.0,"sig":[0.0,6.539,1.239,429.0],"why":["Sudden jumps in readings","Source speed changed","Extreme readings"]},{"d":"2026-09-11","s":"W","t":"","p":0.048,"rows":24.0,"sig":[0.0,3.291,1.114,263.0],"why":["Data looks different from normal","Many sudden jumps this week"]},{"d":"2026-09-12","s":"S","t":"","p":0.024,"rows":24.0,"sig":[0.0,8.021,0.951,204.0],"why":["Source speed is unstable"]},{"d":"2026-09-13","s":"W","t":"","p":0.031,"rows":24.0,"sig":[0.0,9.808,0.93,102.0],"why":["Source speed is unstable"]},{"d":"2026-09-14","s":"W","t":"","p":0.024,"rows":24.0,"sig":[0.0,7.379,0.88,107.0],"why":["Source speed is unstable"]},{"d":"2026-09-15","s":"W","t":"","p":0.022,"rows":24.0,"sig":[0.0,5.314,0.926,247.0],"why":["Source speed is unstable","Data looks unusual this week"]},{"d":"2026-09-16","s":"W","t":"","p":0.083,"rows":24.0,"sig":[0.0,5.695,0.967,579.0],"why":["Sudden jumps in readings","Source speed is unstable","Data looks unusual this week"]},{"d":"2026-09-17","s":"F","t":"bad","p":0.213,"rows":24.0,"sig":[0.0,4.827,0.967,484.0],"why":["Today's run failed","A failure happened recently","Invalid values"]},{"d":"2026-09-18","s":"W","t":"","p":0.07,"rows":24.0,"sig":[0.0,5.756,1.006,380.0],"why":["A failure happened recently","Sudden jumps in readings","Source speed changed"]},{"d":"2026-09-19","s":"W","t":"","p":0.041,"rows":24.0,"sig":[0.0,6.782,1.031,237.0],"why":["Failed recently; failures come in groups","A failure happened recently","Source speed changed"]},{"d":"2026-09-20","s":"W","t":"","p":0.038,"rows":24.0,"sig":[0.0,8.222,1.025,344.0],"why":["A failure happened recently","Source speed changed","Failed recently; failures come in groups"]},{"d":"2026-09-21","s":"W","t":"","p":0.024,"rows":24.0,"sig":[0.0,6.397,0.989,341.0],"why":["Failed recently; failures come in groups","A failure happened recently"]},{"d":"2026-09-22","s":"W","t":"","p":0.033,"rows":24.0,"sig":[0.0,4.869,0.896,244.0],"why":["Failed recently; failures come in groups","Source speed changed"]},{"d":"2026-09-23","s":"W","t":"","p":0.033,"rows":24.0,"sig":[0.0,4.259,0.916,209.0],"why":["Failed recently; failures come in groups","Data looks different from normal"]},{"d":"2026-09-24","s":"W","t":"","p":0.023,"rows":24.0,"sig":[0.0,4.97,0.969,165.0],"why":[]},{"d":"2026-09-25","s":"S","t":"","p":0.02,"rows":24.0,"sig":[0.0,6.661,1.014,93.4],"why":["Sudden jumps in readings"]},{"d":"2026-09-26","s":"S","t":"","p":0.018,"rows":24.0,"sig":[0.0,5.516,0.97,127.0],"why":[]},{"d":"2026-09-27","s":"S","t":"","p":0.022,"rows":24.0,"sig":[0.0,7.445,1.063,59.0],"why":[]},{"d":"2026-09-28","s":"S","t":"","p":0.027,"rows":24.0,"sig":[0.0,5.859,1.111,121.0],"why":["Source speed changed","Data looks different from normal"]},{"d":"2026-09-29","s":"W","t":"","p":0.027,"rows":24.0,"sig":[0.0,4.567,0.938,155.0],"why":["Data looks different from normal"]},{"d":"2026-09-30","s":"W","t":"","p":0.025,"rows":24.0,"sig":[0.0,4.96,1.028,220.0],"why":["Extreme readings"]},{"d":"2026-10-01","s":"W","t":"","p":0.06,"rows":24.0,"sig":[0.0,6.814,1.48,340.0],"why":["Extreme readings","Source speed is unstable","Source speed changed"]},{"d":"2026-10-02","s":"W","t":"","p":0.054,"rows":24.0,"sig":[0.0,6.343,1.57,339.0],"why":["Source speed is unstable","Source speed changed","Extreme readings"]},{"d":"2026-10-03","s":"W","t":"","p":0.04,"rows":24.0,"sig":[0.0,4.379,1.285,294.0],"why":["Source speed is unstable","Extreme readings","Slow run"]},{"d":"2026-10-04","s":"W","t":"","p":0.093,"rows":24.0,"sig":[0.0,4.322,1.415,306.0],"why":["Extreme readings","Source speed is unstable","Source speed changed"]},{"d":"2026-10-05","s":"W","t":"","p":0.096,"rows":24.0,"sig":[0.0,6.15,1.418,293.0],"why":["Extreme readings","Source speed is unstable","Source speed changed"]},{"d":"2026-10-06","s":"W","t":"","p":0.053,"rows":24.0,"sig":[0.0,4.79,1.596,190.0],"why":["Extreme readings","Source speed changed","Source is slow"]},{"d":"2026-10-07","s":"W","t":"","p":0.047,"rows":24.0,"sig":[0.0,3.511,1.289,182.0],"why":["Extreme readings","Data looks different from normal","Source speed changed"]},{"d":"2026-10-08","s":"W","t":"","p":0.03,"rows":24.0,"sig":[0.0,4.219,1.504,145.0],"why":["Extreme readings","Source is slow","Source speed is unstable"]},{"d":"2026-10-09","s":"W","t":"","p":0.026,"rows":24.0,"sig":[0.0,5.357,1.564,139.0],"why":["Data looks unusual this week","Source is slow"]},{"d":"2026-10-10","s":"W","t":"","p":0.022,"rows":24.0,"sig":[0.0,6.965,1.461,137.6],"why":["Source is slow","Extreme readings"]},{"d":"2026-10-11","s":"W","t":"","p":0.042,"rows":24.0,"sig":[0.0,6.774,1.847,70.0],"why":["Source speed changed","Source is slow","Source speed is unstable"]},{"d":"2026-10-12","s":"S","t":"","p":0.03,"rows":24.0,"sig":[0.0,6.233,1.276,311.0],"why":["Source speed changed","Source speed is unstable"]},{"d":"2026-10-13","s":"W","t":"","p":0.031,"rows":24.0,"sig":[0.0,7.626,1.469,339.0],"why":["Source speed is unstable","Source is slow"]},{"d":"2026-10-14","s":"W","t":"","p":0.044,"rows":24.0,"sig":[0.0,6.622,1.376,411.0],"why":["Sudden jumps in readings","Source speed is unstable","Source is slow"]},{"d":"2026-10-15","s":"W","t":"","p":0.051,"rows":24.0,"sig":[0.0,4.178,2.315,252.0],"why":["Source speed is unstable","Slow run","Source is slow"]},{"d":"2026-10-16","s":"W","t":"","p":0.121,"rows":24.0,"sig":[0.0,4.996,1.725,456.0],"why":["Source speed is unstable","Sudden jumps in readings","Extreme readings"]},{"d":"2026-10-17","s":"F","t":"bad","p":0.297,"rows":24.0,"sig":[0.0,5.283,1.847,845.0],"why":["Today's run failed","Extreme readings","A failure happened recently"]},{"d":"2026-10-18","s":"W","t":"","p":0.095,"rows":24.0,"sig":[0.0,3.9,1.494,359.0],"why":["A failure happened recently","Source speed is unstable","Data looks different from normal"]},{"d":"2026-10-19","s":"W","t":"","p":0.111,"rows":24.0,"sig":[0.0,6.004,1.652,520.0],"why":["Extreme readings","Source speed is unstable","Sudden jumps in readings"]},{"d":"2026-10-20","s":"W","t":"","p":0.094,"rows":24.0,"sig":[0.0,4.831,1.719,420.0],"why":["Source speed is unstable","Extreme readings","Sudden jumps in readings"]},{"d":"2026-10-21","s":"W","t":"","p":0.118,"rows":24.0,"sig":[0.0,4.733,1.418,675.0],"why":["Extreme readings","Sudden jumps in readings","Many sudden jumps this week"]},{"d":"2026-10-22","s":"W","t":"","p":0.176,"rows":24.0,"sig":[0.0,6.385,1.649,643.0],"why":["Extreme readings","Sudden jumps in readings","Many sudden jumps this week"]},{"d":"2026-10-23","s":"W","t":"","p":0.113,"rows":24.0,"sig":[0.0,4.937,1.423,677.0],"why":["Sudden jumps in readings","Many sudden jumps this week","Extreme readings"]},{"d":"2026-10-24","s":"W","t":"","p":0.12,"rows":24.0,"sig":[0.0,4.793,1.386,667.0],"why":["Extreme readings","Sudden jumps in readings","Many sudden jumps this week"]},{"d":"2026-10-25","s":"W","t":"","p":0.044,"rows":24.0,"sig":[0.0,8.112,1.407,222.0],"why":["Source speed changed","Many sudden jumps this week"]},{"d":"2026-10-26","s":"W","t":"","p":0.069,"rows":24.0,"sig":[0.0,5.482,1.587,324.0],"why":["Extreme readings","Source speed is unstable","Source is slow"]},{"d":"2026-10-27","s":"W","t":"","p":0.116,"rows":24.0,"sig":[0.0,4.914,1.829,496.0],"why":["Sudden jumps in readings","Extreme readings","Source speed changed"]},{"d":"2026-10-28","s":"W","t":"","p":0.112,"rows":24.0,"sig":[0.0,5.259,1.712,570.0],"why":["Sudden jumps in readings","Extreme readings","Source speed changed"]},{"d":"2026-10-29","s":"W","t":"","p":0.075,"rows":24.0,"sig":[0.0,4.087,1.543,518.0],"why":["Sudden jumps in readings","Data looks different from normal","Source speed is unstable"]},{"d":"2026-10-30","s":"S","t":"","p":0.033,"rows":24.0,"sig":[0.0,7.991,1.558,271.0],"why":["Source speed is unstable","Slow run"]},{"d":"2026-10-31","s":"W","t":"","p":0.088,"rows":24.0,"sig":[0.0,5.261,0.915,875.0],"why":["Sudden jumps in readings","Source speed is unstable","Many sudden jumps this week"]},{"d":"2026-11-01","s":"W","t":"","p":0.103,"rows":24.0,"sig":[0.0,4.475,0.977,402.0],"why":["Time of year: failures are more common now","Source speed is unstable","Extreme readings"]},{"d":"2026-11-02","s":"W","t":"","p":0.119,"rows":24.0,"sig":[0.0,5.316,1.0,669.0],"why":["Sudden jumps in readings","Many sudden jumps this week","Extreme readings"]},{"d":"2026-11-03","s":"W","t":"","p":0.18,"rows":24.0,"sig":[0.0,3.832,1.317,478.0],"why":["Sudden jumps in readings","Extreme readings","Time of year: failures are more common now"]},{"d":"2026-11-04","s":"F","t":"bad","p":0.304,"rows":24.0,"sig":[0.0,6.039,1.332,620.0],"why":["Extreme readings","Source is slow","Source speed changed"]},{"d":"2026-11-05","s":"F","t":"bad","p":0.228,"rows":24.0,"sig":[0.0,5.331,1.046,669.0],"why":["Today's run failed","Source is slow","Extreme readings"]},{"d":"2026-11-06","s":"W","t":"","p":0.138,"rows":24.0,"sig":[0.0,4.304,0.935,398.0],"why":["Data looks different from normal","Extreme readings","Source speed changed"]},{"d":"2026-11-07","s":"W","t":"","p":0.093,"rows":24.0,"sig":[0.0,5.836,0.906,639.0],"why":["Sudden jumps in readings","Time of year: failures are more common now","Source speed changed"]},{"d":"2026-11-08","s":"W","t":"","p":0.132,"rows":24.0,"sig":[0.0,5.864,1.323,460.0],"why":["Source speed changed","Time of year: failures are more common now","Failed recently; failures come in groups"]},{"d":"2026-11-09","s":"W","t":"","p":0.118,"rows":24.0,"sig":[0.0,5.492,1.048,818.0],"why":["Sudden jumps in readings","Time of year: failures are more common now","Source speed changed"],"logged":true}]},{"id":"pune","name":"air_quality_pune","source":"Open-Meteo air-quality API, Pune","table":"logs/api_runs","owner":"DPFP project","real":true,"lowconf":true,"dq_failures":8,"n_total":1558,"fail_total":11,"fail_before":10,"norm":[[0.0,4.0],[5.758,8.002],[1.007,1.19],[81.0,246.0]],"days":[{"d":"2026-07-13","s":"S","t":"","p":0.044,"rows":24.0,"sig":[0.0,3.867,0.949,25.0],"why":["Data looks different from normal","A failure happened recently","Failed recently; failures come in groups"]},{"d":"2026-07-14","s":"S","t":"","p":0.058,"rows":24.0,"sig":[0.0,5.115,1.129,27.0],"why":["A failure happened recently","A sensor got stuck","Source speed changed"]},{"d":"2026-07-15","s":"S","t":"","p":0.037,"rows":24.0,"sig":[0.0,5.261,0.957,21.0],"why":["A failure happened recently","Failed recently; failures come in groups"]},{"d":"2026-07-16","s":"S","t":"","p":0.038,"rows":24.0,"sig":[0.0,6.103,1.024,17.0],"why":["A sensor got stuck","Failed recently; failures come in groups","Sudden jumps in readings"]},{"d":"2026-07-17","s":"S","t":"","p":0.029,"rows":24.0,"sig":[0.0,6.153,1.016,13.0],"why":["Failed recently; failures come in groups"]},{"d":"2026-07-18","s":"S","t":"","p":0.03,"rows":24.0,"sig":[0.0,5.145,1.038,21.0],"why":["Source speed changed"]},{"d":"2026-07-19","s":"S","t":"","p":0.034,"rows":24.0,"sig":[0.0,5.605,0.995,22.0],"why":["A sensor got stuck"]},{"d":"2026-07-20","s":"S","t":"","p":0.043,"rows":24.0,"sig":[0.0,5.583,0.909,24.0],"why":["A sensor got stuck","Source speed changed"]},{"d":"2026-07-21","s":"S","t":"","p":0.036,"rows":24.0,"sig":[0.0,5.807,0.937,38.0],"why":["A sensor got stuck"]},{"d":"2026-07-22","s":"S","t":"","p":0.034,"rows":24.0,"sig":[0.0,5.144,0.962,27.0],"why":["A sensor got stuck"]},{"d":"2026-07-23","s":"S","t":"","p":0.028,"rows":24.0,"sig":[0.0,5.707,1.064,26.0],"why":["Source speed changed"]},{"d":"2026-07-24","s":"S","t":"","p":0.032,"rows":24.0,"sig":[0.0,4.989,0.954,23.0],"why":["A sensor got stuck"]},{"d":"2026-07-25","s":"S","t":"","p":0.023,"rows":24.0,"sig":[0.0,5.188,0.932,23.0],"why":[]},{"d":"2026-07-26","s":"S","t":"","p":0.023,"rows":24.0,"sig":[0.0,4.931,1.026,17.0],"why":[]},{"d":"2026-07-27","s":"S","t":"","p":0.026,"rows":24.0,"sig":[0.0,3.784,0.913,24.0],"why":["Data looks different from normal"]},{"d":"2026-07-28","s":"S","t":"","p":0.024,"rows":24.0,"sig":[0.0,4.799,1.013,23.0],"why":[]},{"d":"2026-07-29","s":"S","t":"","p":0.036,"rows":24.0,"sig":[0.0,4.597,0.923,32.0],"why":["A sensor got stuck"]},{"d":"2026-07-30","s":"S","t":"","p":0.029,"rows":24.0,"sig":[0.0,6.307,0.913,27.0],"why":["A sensor got stuck","Sudden jumps in readings"]},{"d":"2026-07-31","s":"S","t":"","p":0.029,"rows":24.0,"sig":[0.0,4.101,0.96,42.0],"why":["A sensor got stuck"]},{"d":"2026-08-01","s":"S","t":"","p":0.03,"rows":24.0,"sig":[0.0,4.505,0.943,20.0],"why":["Data looks unusual this week"]},{"d":"2026-08-02","s":"S","t":"","p":0.023,"rows":24.0,"sig":[0.0,5.029,1.034,15.9],"why":["Data looks unusual this week"]},{"d":"2026-08-03","s":"S","t":"","p":0.022,"rows":24.0,"sig":[0.0,4.406,0.993,43.0],"why":[]},{"d":"2026-08-04","s":"S","t":"","p":0.024,"rows":24.0,"sig":[0.0,4.894,0.964,27.0],"why":[]},{"d":"2026-08-05","s":"W","t":"","p":0.041,"rows":24.0,"sig":[0.0,3.22,0.884,47.0],"why":["Slow run","Data looks different from normal"]},{"d":"2026-08-06","s":"S","t":"","p":0.035,"rows":24.0,"sig":[0.0,5.123,1.019,30.0],"why":["A sensor got stuck","Data looks unusual this week"]},{"d":"2026-08-07","s":"S","t":"","p":0.027,"rows":24.0,"sig":[0.0,5.239,0.912,24.0],"why":["Data looks unusual this week"]},{"d":"2026-08-08","s":"S","t":"","p":0.019,"rows":24.0,"sig":[0.0,7.453,0.928,21.0],"why":["Sudden jumps in readings"]},{"d":"2026-08-09","s":"S","t":"","p":0.022,"rows":24.0,"sig":[0.0,6.151,1.105,17.0],"why":["Source speed changed"]},{"d":"2026-08-10","s":"S","t":"","p":0.03,"rows":24.0,"sig":[0.0,6.398,1.015,27.0],"why":["A sensor got stuck"]},{"d":"2026-08-11","s":"S","t":"","p":0.025,"rows":24.0,"sig":[0.0,6.522,1.163,21.0],"why":["Source speed changed"]},{"d":"2026-08-12","s":"S","t":"","p":0.022,"rows":24.0,"sig":[0.0,6.096,0.92,34.0],"why":["Source speed is unstable"]},{"d":"2026-08-13","s":"S","t":"","p":0.019,"rows":24.0,"sig":[0.0,6.048,1.022,47.0],"why":[]},{"d":"2026-08-14","s":"S","t":"","p":0.027,"rows":24.0,"sig":[0.0,5.564,1.204,29.0],"why":["Source speed changed"]},{"d":"2026-08-15","s":"S","t":"","p":0.021,"rows":24.0,"sig":[0.0,6.593,0.948,49.0],"why":["Source speed is unstable","Source speed changed"]},{"d":"2026-08-16","s":"S","t":"","p":0.021,"rows":24.0,"sig":[0.0,5.998,0.958,17.0],"why":["Source speed is unstable"]},{"d":"2026-08-17","s":"S","t":"","p":0.021,"rows":24.0,"sig":[0.0,6.955,1.017,32.0],"why":["Source speed is unstable"]},{"d":"2026-08-18","s":"S","t":"","p":0.025,"rows":24.0,"sig":[0.0,4.89,0.922,21.0],"why":["Source speed is unstable","Data looks different from normal"]},{"d":"2026-08-19","s":"S","t":"","p":0.018,"rows":24.0,"sig":[0.0,6.586,1.032,30.0],"why":[]},{"d":"2026-08-20","s":"S","t":"","p":0.018,"rows":24.0,"sig":[0.0,6.61,1.121,23.0],"why":[]},{"d":"2026-08-21","s":"S","t":"","p":0.024,"rows":24.0,"sig":[0.0,6.818,1.236,25.0],"why":[]},{"d":"2026-08-22","s":"S","t":"","p":0.025,"rows":24.0,"sig":[0.0,4.875,0.894,20.0],"why":["Source speed changed","Source speed is unstable"]},{"d":"2026-08-23","s":"S","t":"","p":0.022,"rows":24.0,"sig":[0.0,5.489,0.918,14.0],"why":["Source speed is unstable","Source speed changed"]},{"d":"2026-08-24","s":"S","t":"","p":0.023,"rows":24.0,"sig":[0.0,5.974,1.007,24.0],"why":["Source speed is unstable"]},{"d":"2026-08-25","s":"S","t":"","p":0.023,"rows":24.0,"sig":[0.0,5.96,0.904,26.1],"why":["Source speed is unstable"]},{"d":"2026-08-26","s":"S","t":"","p":0.026,"rows":24.0,"sig":[0.0,5.295,0.914,25.0],"why":["Source speed is unstable"]},{"d":"2026-08-27","s":"S","t":"","p":0.018,"rows":24.0,"sig":[0.0,6.531,0.957,21.0],"why":["Source speed is unstable"]},{"d":"2026-08-28","s":"S","t":"","p":0.018,"rows":24.0,"sig":[0.0,7.743,1.101,21.0],"why":["Source speed changed"]},{"d":"2026-08-29","s":"S","t":"","p":0.018,"rows":24.0,"sig":[0.0,6.516,0.99,19.0],"why":[]},{"d":"2026-08-30","s":"S","t":"","p":0.027,"rows":24.0,"sig":[0.0,7.594,0.937,14.0],"why":["A sensor got stuck","Sudden jumps in readings"]},{"d":"2026-08-31","s":"S","t":"","p":0.018,"rows":24.0,"sig":[0.0,5.845,0.977,19.0],"why":[]},{"d":"2026-09-01","s":"W","t":"","p":0.034,"rows":24.0,"sig":[0.0,0.0,1.565,18.0],"why":["Data looks different from normal","Slow run"]},{"d":"2026-09-02","s":"S","t":"","p":0.033,"rows":24.0,"sig":[0.0,11.513,1.006,18.0],"why":["Source speed is unstable","Source speed changed"]},{"d":"2026-09-03","s":"S","t":"","p":0.029,"rows":24.0,"sig":[0.0,7.576,1.073,20.0],"why":["Source speed changed","Source speed is unstable"]},{"d":"2026-09-04","s":"S","t":"","p":0.028,"rows":24.0,"sig":[0.0,7.502,0.955,18.0],"why":["Source speed changed","Source speed is unstable"]},{"d":"2026-09-05","s":"S","t":"","p":0.023,"rows":24.0,"sig":[0.0,8.028,1.124,23.0],"why":["Source speed is unstable"]},{"d":"2026-09-06","s":"S","t":"","p":0.027,"rows":24.0,"sig":[0.0,8.21,0.933,25.0],"why":["Source speed changed","Source speed is unstable"]},{"d":"2026-09-07","s":"S","t":"","p":0.028,"rows":24.0,"sig":[0.0,7.907,0.936,28.0],"why":["Source speed is unstable","Source speed changed"]},{"d":"2026-09-08","s":"S","t":"","p":0.028,"rows":24.0,"sig":[0.0,7.729,0.983,42.0],"why":["Slow run","Run took longer than usual"]},{"d":"2026-09-09","s":"S","t":"","p":0.019,"rows":24.0,"sig":[0.0,8.772,1.115,39.0],"why":[]},{"d":"2026-09-10","s":"S","t":"","p":0.019,"rows":24.0,"sig":[0.0,6.982,0.974,41.0],"why":[]},{"d":"2026-09-11","s":"S","t":"","p":0.017,"rows":24.0,"sig":[0.0,7.297,1.1,50.0],"why":[]},{"d":"2026-09-12","s":"S","t":"","p":0.022,"rows":24.0,"sig":[0.0,4.138,0.918,41.0],"why":[]},{"d":"2026-09-13","s":"S","t":"","p":0.018,"rows":24.0,"sig":[0.0,8.548,0.92,30.0],"why":[]},{"d":"2026-09-14","s":"S","t":"","p":0.022,"rows":24.0,"sig":[0.0,7.753,1.142,20.0],"why":["Source speed changed","Data looks unusual this week"]},{"d":"2026-09-15","s":"S","t":"","p":0.018,"rows":24.0,"sig":[0.0,6.329,0.956,22.0],"why":["Source speed is unstable"]},{"d":"2026-09-16","s":"S","t":"","p":0.02,"rows":24.0,"sig":[0.0,5.359,0.96,30.0],"why":[]},{"d":"2026-09-17","s":"S","t":"","p":0.018,"rows":24.0,"sig":[0.0,5.421,0.915,28.0],"why":[]},{"d":"2026-09-18","s":"S","t":"","p":0.017,"rows":24.0,"sig":[0.0,4.599,0.999,27.0],"why":[]},{"d":"2026-09-19","s":"S","t":"","p":0.018,"rows":24.0,"sig":[0.0,3.943,0.941,39.0],"why":[]},{"d":"2026-09-20","s":"S","t":"","p":0.014,"rows":24.0,"sig":[0.0,8.459,0.997,32.0],"why":[]},{"d":"2026-09-21","s":"S","t":"","p":0.014,"rows":24.0,"sig":[0.0,8.531,0.922,60.0],"why":[]},{"d":"2026-09-22","s":"S","t":"","p":0.016,"rows":24.0,"sig":[0.0,7.381,0.914,48.0],"why":["Sudden jumps in readings"]},{"d":"2026-09-23","s":"S","t":"","p":0.02,"rows":24.0,"sig":[0.0,5.803,1.088,39.0],"why":["Source speed changed","Data looks different from normal"]},{"d":"2026-09-24","s":"S","t":"","p":0.017,"rows":24.0,"sig":[0.0,5.246,1.018,52.0],"why":[]},{"d":"2026-09-25","s":"S","t":"","p":0.017,"rows":24.0,"sig":[0.0,4.367,1.014,24.0],"why":[]},{"d":"2026-09-26","s":"S","t":"","p":0.026,"rows":24.0,"sig":[0.0,7.863,0.925,32.0],"why":["A sensor got stuck"]},{"d":"2026-09-27","s":"S","t":"","p":0.016,"rows":24.0,"sig":[0.0,7.952,0.896,29.0],"why":[]},{"d":"2026-09-28","s":"S","t":"","p":0.018,"rows":24.0,"sig":[0.0,4.753,1.038,70.0],"why":[]},{"d":"2026-09-29","s":"S","t":"","p":0.014,"rows":24.0,"sig":[0.0,4.941,0.928,207.0],"why":[]},{"d":"2026-09-30","s":"S","t":"","p":0.01,"rows":24.0,"sig":[0.0,7.117,1.007,222.0],"why":[]},{"d":"2026-10-01","s":"F","t":"slow","p":0.128,"rows":24.0,"sig":[0.0,7.779,3.753,120.0],"why":["A failure happened recently","Source speed changed","Source speed is unstable"]},{"d":"2026-10-02","s":"S","t":"","p":0.071,"rows":24.0,"sig":[0.0,5.998,1.276,250.0],"why":["A failure happened recently","Source speed is unstable","Source speed changed"]},{"d":"2026-10-03","s":"W","t":"","p":0.065,"rows":24.0,"sig":[0.0,4.127,1.631,120.0],"why":["Source speed is unstable","Slow run","Source speed changed"]},{"d":"2026-10-04","s":"S","t":"","p":0.059,"rows":24.0,"sig":[0.0,5.359,1.492,93.0],"why":["Source speed is unstable","Source speed changed","Failed recently; failures come in groups"]},{"d":"2026-10-05","s":"S","t":"","p":0.059,"rows":24.0,"sig":[0.0,4.102,1.45,186.0],"why":["Source speed is unstable","Source speed changed","Failed recently; failures come in groups"]},{"d":"2026-10-06","s":"S","t":"","p":0.057,"rows":24.0,"sig":[0.0,4.115,1.48,184.0],"why":["Source speed is unstable","Source speed changed","Failed recently; failures come in groups"]},{"d":"2026-10-07","s":"S","t":"","p":0.064,"rows":24.0,"sig":[0.0,3.801,1.472,120.0],"why":["Source speed is unstable","Slow run","Data looks different from normal"]},{"d":"2026-10-08","s":"S","t":"","p":0.04,"rows":24.0,"sig":[0.0,5.395,1.318,237.0],"why":["Source speed changed","Data looks unusual this week","A failure happened recently"]},{"d":"2026-10-09","s":"S","t":"","p":0.039,"rows":24.0,"sig":[0.0,5.681,1.227,262.0],"why":["Source speed changed","Data looks unusual this week","Source speed is unstable"]},{"d":"2026-10-10","s":"S","t":"","p":0.027,"rows":24.0,"sig":[0.0,6.328,1.415,203.0],"why":[]},{"d":"2026-10-11","s":"S","t":"","p":0.034,"rows":24.0,"sig":[0.0,4.624,1.496,103.0],"why":[]},{"d":"2026-10-12","s":"S","t":"","p":0.023,"rows":24.0,"sig":[0.0,8.39,1.298,230.0],"why":[]},{"d":"2026-10-13","s":"S","t":"","p":0.023,"rows":24.0,"sig":[0.0,7.38,1.284,163.0],"why":[]},{"d":"2026-10-14","s":"S","t":"","p":0.026,"rows":24.0,"sig":[0.0,5.914,1.443,111.0],"why":["Slow run"]},{"d":"2026-10-15","s":"S","t":"","p":0.03,"rows":24.0,"sig":[0.0,3.744,1.408,110.0],"why":["Data looks different from normal","Slow run"]},{"d":"2026-10-16","s":"S","t":"","p":0.028,"rows":24.0,"sig":[0.0,5.357,1.547,147.0],"why":["Source speed changed","Slow run"]},{"d":"2026-10-17","s":"S","t":"","p":0.028,"rows":24.0,"sig":[0.0,5.757,1.547,148.0],"why":[]},{"d":"2026-10-18","s":"S","t":"","p":0.027,"rows":24.0,"sig":[0.0,5.267,1.417,101.0],"why":[]},{"d":"2026-10-19","s":"S","t":"","p":0.029,"rows":24.0,"sig":[0.0,3.879,1.43,211.0],"why":["Data looks different from normal"]},{"d":"2026-10-20","s":"S","t":"","p":0.02,"rows":24.0,"sig":[0.0,6.591,1.465,151.0],"why":[]},{"d":"2026-10-21","s":"S","t":"","p":0.023,"rows":24.0,"sig":[0.0,4.241,1.409,160.0],"why":["Slow run"]},{"d":"2026-10-22","s":"S","t":"","p":0.025,"rows":24.0,"sig":[0.0,5.736,1.221,138.0],"why":["Source speed changed"]},{"d":"2026-10-23","s":"S","t":"","p":0.021,"rows":24.0,"sig":[0.0,4.573,1.349,141.0],"why":[]},{"d":"2026-10-24","s":"S","t":"","p":0.021,"rows":24.0,"sig":[0.0,7.237,1.226,140.0],"why":["Source speed changed"]},{"d":"2026-10-25","s":"S","t":"","p":0.018,"rows":24.0,"sig":[0.0,7.576,1.243,121.0],"why":[]},{"d":"2026-10-26","s":"S","t":"","p":0.019,"rows":24.0,"sig":[0.0,5.964,1.271,213.0],"why":[]},{"d":"2026-10-27","s":"S","t":"","p":0.017,"rows":24.0,"sig":[0.0,6.65,1.293,125.0],"why":[]},{"d":"2026-10-28","s":"S","t":"","p":0.02,"rows":24.0,"sig":[0.0,8.845,1.219,68.0],"why":[]},{"d":"2026-10-29","s":"S","t":"","p":0.027,"rows":24.0,"sig":[0.0,6.682,1.409,62.0],"why":["Data looks unusual this week","Source is slow"]},{"d":"2026-10-30","s":"S","t":"","p":0.031,"rows":24.0,"sig":[0.0,5.354,1.433,63.0],"why":["Data looks unusual this week","Source is slow"]},{"d":"2026-10-31","s":"S","t":"","p":0.028,"rows":24.0,"sig":[0.0,10.133,1.132,81.0],"why":["Source speed changed","Data looks unusual this week","Data looks different from normal"]},{"d":"2026-11-01","s":"S","t":"","p":0.072,"rows":24.0,"sig":[0.0,7.915,0.947,137.0],"why":["Time of year: failures are more common now","Data looks unusual this week"]},{"d":"2026-11-02","s":"S","t":"","p":0.078,"rows":24.0,"sig":[0.0,5.458,0.933,73.0],"why":["Time of year: failures are more common now","Data looks unusual this week","Source speed changed"]},{"d":"2026-11-03","s":"W","t":"","p":0.087,"rows":24.0,"sig":[0.0,6.452,2.308,190.0],"why":["Time of year: failures are more common now","Source speed is unstable","Source speed changed"]},{"d":"2026-11-04","s":"S","t":"","p":0.092,"rows":24.0,"sig":[0.0,7.331,1.539,327.0],"why":["Time of year: failures are more common now","Source speed is unstable","Source speed changed"]},{"d":"2026-11-05","s":"W","t":"","p":0.097,"rows":24.0,"sig":[0.0,3.963,2.051,212.0],"why":["Time of year: failures are more common now","Source speed is unstable","Data looks different from normal"]},{"d":"2026-11-06","s":"S","t":"","p":0.086,"rows":24.0,"sig":[0.0,1.611,1.167,99.0],"why":["Time of year: failures are more common now","Source speed changed","Source speed is unstable"]},{"d":"2026-11-07","s":"S","t":"","p":0.072,"rows":24.0,"sig":[0.0,4.014,0.936,116.0],"why":["Time of year: failures are more common now","Source speed is unstable","Source speed changed"]},{"d":"2026-11-08","s":"W","t":"","p":0.088,"rows":24.0,"sig":[0.0,4.246,1.89,130.0],"why":["Time of year: failures are more common now","Source speed is unstable","Slow run"]},{"d":"2026-11-09","s":"W","t":"","p":0.075,"rows":24.0,"sig":[0.0,6.095,1.894,149.0],"why":["Time of year: failures are more common now","Source is slow","Source speed changed"],"logged":true}]}]};
+const TH = D.threshold, PIPES = D.pipelines, N = PIPES[0].days.length;
+const DATES = PIPES[0].days.map(d=>d.d);
+let at = N-1, view = "fleet", sel = null, timer = null;
+const $ = s => document.querySelector(s);
+const fd = (s,o={day:"numeric",month:"short"}) => new Date(s+"T00:00:00Z").toLocaleDateString("en-GB",{timeZone:"UTC",...o});
+const add = (s,n) => { const d=new Date(s+"T00:00:00Z"); d.setUTCDate(d.getUTCDate()+n); return d.toISOString().slice(0,10); };
+const pc = v => (v*100).toFixed(1);
+const esc = s => String(s).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+const SIG = [
+  {name:"Missing rows", unit:"%", help:"Share of expected hourly rows that never arrived"},
+  {name:"Data drift", unit:"", help:"How different today's data looks from normal (PSI)"},
+  {name:"Source speed", unit:" s", help:"How long the source took to answer"},
+  {name:"Sudden jumps", unit:"", help:"Biggest hour-to-hour change in readings"}];
+const TYPES = {bad:"Broken values", slow:"Source too slow"};
+const isFail = d => d.s==="F";
+
+function state(P){
+  const d = P.days[at];
+  if(d.s==="F") return {k:"bad", chip:"FAILED TODAY", rank:3};
+  if(d.p>=TH) return P.lowconf ? {k:"warn", chip:"WATCH · LOW CONF.", rank:1.5} : {k:"bad", chip:"ALERT", rank:2};
+  if(d.p>=TH*0.8) return {k:"warn", chip:"WATCH", rank:1};
+  return {k:"ok", chip:"OK", rank:0};
+}
+function likely(P){ const d = P.days[at]; if(d.s==="F") return TYPES[d.t]||"Failure"; if(d.p<TH*0.8) return "—";
+  const w = (d.why||[])[0]||""; return /speed|slow/i.test(w) ? TYPES.slow : TYPES.bad; }
+function sigState(P,k,v){ const [m,h]=P.norm[k]; if(v==null) return "grey"; if(v>h) return "bad"; if(v>m*1.25 && v>m+0.01) return "warn"; return "ok"; }
+function stats(P){ const lo=Math.max(1,at-29); let f=0,c=0,fa=0; for(let k=lo;k<=at;k++){ const d=P.days[k], pr=P.days[k-1];
+  if(isFail(d)){ f++; if(pr.p>=TH) c++; } if(pr.p>=TH && !isFail(d)) fa++; } return {f,c,fa}; }
+const tomorrowName = () => fd(add(DATES[at],1),{weekday:"long"});
+
+function renderTop(){
+  const live = at===N-1;
+  $("#live").className = "live"+(live?"":" replay"); $("#live-t").textContent = live?"LIVE":"REPLAY";
+  $("#asof").innerHTML = live ? `Data up to <b>${fd(DATES[at],{day:"numeric",month:"short",year:"numeric"})}</b> · updates daily 08:00 IST` : `Showing <b>${fd(DATES[at],{weekday:"short",day:"numeric",month:"short"})}</b> as it looked that day`;
+}
+function setSummary(pre,k,h,p){ $(`#${pre}-sum`).className="summary "+k; $(`#${pre}-ic`).textContent = k==="ok"?"✓":"!"; $(`#${pre}-h`).textContent=h; $(`#${pre}-p`).textContent=p; }
+
+function renderFleet(){
+  const rows = PIPES.map(P=>({P, st:state(P), d:P.days[at]})).sort((a,b)=> b.st.rank-a.st.rank || b.d.p-a.d.p);
+  const failed = rows.filter(r=>r.st.chip==="FAILED TODAY"), alert = rows.filter(r=>r.st.chip==="ALERT"), watch = rows.filter(r=>r.st.k==="warn");
+  const need = failed.length+alert.length, total = PIPES.length;
+  if(need){ const top = failed[0] || alert[0];
+    const parts = []; if(failed.length) parts.push(`${failed.length} failed today`); if(alert.length) parts.push(`${alert.length} may fail ${tomorrowName()}`);
+    setSummary("f","bad",`${need} of ${total} pipelines need attention: ${parts.join(", ")}.`,
+      failed.length ? `Start with ${top.P.name}: ${likely(top.P).toLowerCase()} today.${alert.length?` Highest risk tomorrow: ${alert[0].P.name} (${pc(alert[0].d.p)}%).`:""}`
+                    : `Highest risk: ${top.P.name} (${pc(top.d.p)}%), likely ${likely(top.P).toLowerCase()}${(top.d.why||[])[0]?`, mainly: ${top.d.why[0].toLowerCase()}`:""}.`);
+  } else if(watch.length) setSummary("f","warn",`No alerts. ${watch.length} pipeline${watch.length>1?"s":""} to keep an eye on.`,`${watch.map(r=>r.P.name).join(", ")} ${watch.length>1?"are":"is"} close to the alert level.`);
+  else setSummary("f","ok","All pipelines healthy. No action needed.","Every run passed today and every forecast is below the alert level.");
+  const healthy = rows.filter(r=>r.st.k==="ok").length;
+  $("#f-kpis").innerHTML = [[total,"pipelines watched",""],[failed.length,"failed today",failed.length?"bad":""],[alert.length,"may fail tomorrow",alert.length?"bad":""],[healthy,"healthy","ok"]]
+    .map(([b,t,k])=>`<div class="panel kpi ${k}"><b>${b}</b><span>${t}</span></div>`).join("");
+  $("#f-rows").innerHTML = rows.map(({P,st,d})=>{
+    const col = st.k==="ok"?"var(--ok)":st.k==="warn"?"var(--warn)":"var(--bad)";
+    const strip = P.days.slice(Math.max(0,at-13),at+1).map(x=>`<i class="s-${x.s}" title="${fd(x.d)}"></i>`).join("");
+    const dots = d.sig.map((v,k)=>{ const s = sigState(P,k,v); return `<i class="d-${s==="grey"?"ok":s}" title="${SIG[k].name}"></i>`; }).join("");
+    return `<tr tabindex="0" data-id="${esc(P.id)}">
+      <td><div class="pname">${esc(P.name)}${P.lowconf?`<span class="tag ex" title="Fewer than 30 past failures to learn from">LOW CONF.</span>`:""}</div><div class="psrc">${esc(P.source)}</div></td>
+      <td><span class="chip ${st.k}">${st.chip}</span></td>
+      <td><div class="rcell"><span class="num" style="width:44px">${pc(d.p)}%</span><span class="rbar"><b style="width:${Math.min(d.p/.4,1)*100}%;background:${col}"></b><u style="left:${TH/.4*100}%"></u></span></div></td>
+      <td>${likely(P)}</td>
+      <td><span class="strip">${strip}</span></td>
+      <td><span class="dots">${dots}</span></td>
+      <td class="psrc">${esc(P.owner)}</td></tr>`;
+  }).join("");
+  $("#f-foot").innerHTML = `Forecasts come from the DPFP model (Random Forest, retrained every Sunday; last trained ${esc(D.model_trained)}). Alert level ${pc(TH)}% was chosen on validation data. Page built ${esc(D.built_at.replace("T"," "))} IST. Forecasts are saved as they are made in <span class="num">outputs/forecast_log.csv</span>; older days on the charts are scored by the current model. Click any row to open it.`;
+}
+
+function renderDetail(){
+  const P = PIPES.find(p=>p.id===sel), d = P.days[at], st = state(P), s = stats(P);
+  $("#d-name").innerHTML = `${esc(P.name)}${P.lowconf?`<span class="tag ex">LOW CONF.</span>`:""}`;
+  $("#d-src").textContent = `${P.source} · run log: ${P.table} · owner: ${P.owner} · ${P.n_total.toLocaleString()} days tracked, ${P.fail_total} failures`;
+  const why = (d.why||[])[0];
+  if(st.chip==="FAILED TODAY") setSummary("d","bad",`Failed today: ${likely(P).toLowerCase()}.`,`Tomorrow's risk is ${pc(d.p)}%. Fix today's run first; failures tend to repeat.`);
+  else if(st.k==="bad") setSummary("d","bad",`May fail ${tomorrowName()} (${pc(d.p)}% risk).`,`Above the ${pc(TH)}% alert level${why?`, mainly: ${why.toLowerCase()}`:""}. Likely problem: ${likely(P).toLowerCase()}.`);
+  else if(st.k==="warn") setSummary("d","warn", P.lowconf&&d.p>=TH ? `Small warning for ${tomorrowName()} (${pc(d.p)}%).` : `Close to the alert level (${pc(d.p)}%).`, P.lowconf ? `Only ${P.dq_failures} past failures to learn from, so treat this as a rough guide.` : "No action yet. Keep an eye on tomorrow's run.");
+  else setSummary("d","ok",`Healthy. ${pc(d.p)}% risk tomorrow.`,"Today's run passed and the forecast is below the alert level." + (P.lowconf ? ` Only ${P.dq_failures} past failures to learn from, so treat forecasts as a rough guide.` : ""));
+  $("#d-kpis").innerHTML = [[pc(d.p)+"%","risk tomorrow",st.k==="ok"?"ok":st.k],[d.s==="F"?"✗ Failed":"✓ Passed","today's run",d.s==="F"?"bad":""],
+    [s.f?`${s.c} of ${s.f}`:"0","failures warned a day early, 30 days",""],[s.fa,"false alarms, 30 days",""]]
+    .map(([b,t,k])=>`<div class="panel kpi ${k}"><b>${b}</b><span>${t}</span></div>`).join("");
+  $("#d-why").innerHTML = (d.why&&d.why.length ? d.why.slice(0,3) : ["Nothing unusual today"]).map(w=>`<div class="reason"><b>↑</b><span>${esc(w)}</span></div>`).join("");
+  chart(P); alerts(P); sigs(P);
+}
+function chart(P){
+  const days = P.days, lo = Math.max(1, at-89), pts=[];
+  for(let k=lo;k<=at+1;k++){ const src = days[k-1]; pts.push({d:add(src.d,1), p:src.p, real:k<=at?days[k]:null}); }
+  const W=860,H=240,pl=40,pr=80,pt=14,pb=28,ymax=.45;
+  const x=i=>pl+i*(W-pl-pr)/Math.max(1,pts.length-1), y=v=>pt+(1-Math.min(v,ymax)/ymax)*(H-pt-pb);
+  let s="";
+  [0,.1,.2,.3,.4].forEach(v=>{ s+=`<line x1="${pl}" x2="${W-pr}" y1="${y(v)}" y2="${y(v)}" stroke="var(--grid)"/><text x="${pl-8}" y="${y(v)+4}" text-anchor="end">${v*100}%</text>`; });
+  s+=`<line x1="${pl}" x2="${W-pr}" y1="${y(TH)}" y2="${y(TH)}" stroke="var(--bad)" stroke-dasharray="5 4"/><text x="${W-pr+6}" y="${y(TH)+4}" style="fill:var(--bad)">alert ${pc(TH)}%</text>`;
+  const path = pts.map((q,i)=>`${i?"L":"M"}${x(i).toFixed(1)},${y(q.p).toFixed(1)}`).join("");
+  s+=`<path d="${path} L${x(pts.length-1)},${y(0)} L${x(0)},${y(0)}Z" fill="var(--blue)" opacity=".08"/><path d="${path}" fill="none" stroke="var(--blue)" stroke-width="1.8"/>`;
+  pts.forEach((q,i)=>{ if(q.real&&q.real.s==="F") s+=`<circle cx="${x(i)}" cy="${y(q.p)}" r="4.5" fill="var(--bad)"><title>${fd(q.d)}: ${TYPES[q.real.t]||"failed"}</title></circle>`; });
+  const li=pts.length-1;
+  s+=`<circle cx="${x(li)}" cy="${y(pts[li].p)}" r="6" fill="#fff" stroke="var(--blue)" stroke-width="2.5"/><text x="${x(li)+10}" y="${y(pts[li].p)+4}" style="fill:var(--ink);font-weight:600">${pc(pts[li].p)}%</text><text x="${x(li)+10}" y="${y(pts[li].p)+18}">tomorrow</text>`;
+  [0,Math.round(li/3),Math.round(2*li/3),li].forEach(i=>{ s+=`<text x="${x(i)}" y="${H-8}" text-anchor="${i===0?"start":i===li?"end":"middle"}">${fd(pts[i].d)}</text>`; });
+  $("#d-chart").innerHTML = s;
+}
+function alerts(P){
+  const days=P.days, rows=[];
+  for(let k=at;k>=Math.max(0,at-29);k--){ const d=days[k]; if(d.p<TH) continue;
+    const out = k+1<=at ? (isFail(days[k+1])?["bad","Came true"]:["grey","False alarm"]) : ["warn","Tomorrow"];
+    rows.push(`<div class="arow"><span class="num">${fd(add(d.d,1))}</span><span class="num">${pc(d.p)}%</span><span><span class="chip ${out[0]}">${out[1]}</span></span></div>`); }
+  const missed=[]; for(let k=Math.max(1,at-29);k<=at;k++) if(isFail(days[k]) && days[k-1].p<TH) missed.push(fd(days[k].d));
+  $("#d-alerts").innerHTML = (rows.length?rows.slice(0,8).join(""):`<p class="empty">No alerts in the last 30 days.</p>`) + (missed.length?`<p class="empty" style="border-top:1px solid var(--grid)">Missed without warning: ${missed.join(", ")}</p>`:"");
+}
+function sigs(P){
+  const days = P.days.slice(Math.max(0,at-29), at+1);
+  $("#d-sigs").innerHTML = SIG.map((S,k)=>{
+    const vals = days.map(d=>d.sig[k]), v = vals[vals.length-1], [m,h] = P.norm[k], st = sigState(P,k,v);
+    const lbl = {ok:"Normal",warn:"Above usual",bad:"High",grey:"No data"}[st];
+    const mx = Math.max(h*1.2, ...vals.filter(q=>q!=null), 0.01), w=240, hh=46;
+    const xx=j=>j*(w/(vals.length-1||1)), yy=q=>hh-3-(q/mx)*(hh-6);
+    const line = vals.map((q,j)=>q==null?"":`${j&&vals[j-1]!=null?"L":"M"}${xx(j).toFixed(1)},${yy(q).toFixed(1)}`).join("");
+    const col = st==="bad"?"var(--bad)":st==="warn"?"var(--warn)":"var(--ink)";
+    const fmt = q => q==null?"—":(q>=100||Number.isInteger(q)?Math.round(q):q.toFixed(q<10?2:1));
+    return `<div class="panel sig"><div class="row"><h3>${S.name}</h3><span class="chip ${st}">${lbl}</span></div>
+      <div class="v">${fmt(v)}<small>${S.unit} · usual ${fmt(m)}</small></div>
+      <svg viewBox="0 0 ${w} ${hh}" width="100%" height="${hh}" preserveAspectRatio="none" aria-hidden="true">
+        <line x1="0" x2="${w}" y1="${yy(h)}" y2="${yy(h)}" stroke="var(--bad)" stroke-dasharray="3 3" opacity=".5" vector-effect="non-scaling-stroke"/>
+        <path d="${line}" fill="none" stroke="${col}" stroke-width="1.6" vector-effect="non-scaling-stroke"/></svg>
+      <p>${S.help}</p></div>`;
+  }).join("");
+}
+
+function render(){
+  renderTop();
+  $("#v-fleet").hidden = view!=="fleet"; $("#v-detail").hidden = view!=="detail"; $("#v-add").hidden = view!=="add";
+  if(view==="fleet") renderFleet(); if(view==="detail") renderDetail(); if(view==="add") snippet();
+}
+function go(v,id){ view=v; if(id) sel=id; render(); window.scrollTo({top:0}); }
+
+function stop(){ clearInterval(timer); timer=null; $("#replay").className="btn"; $("#replay").textContent="▶ Replay last 30 days"; }
+$("#replay").addEventListener("click",()=>{
+  if(timer){ stop(); at=N-1; render(); return; }
+  if(view==="add") view="fleet";
+  at=Math.max(1,N-31); render(); $("#replay").className="btn stop"; $("#replay").textContent="■ Stop replay";
+  timer=setInterval(()=>{ at++; render(); if(at>=N-1) stop(); },700);
+});
+$("#f-rows").addEventListener("click",e=>{ const tr=e.target.closest("tr[data-id]"); if(tr) go("detail",tr.dataset.id); });
+$("#f-rows").addEventListener("keydown",e=>{ const tr=e.target.closest("tr[data-id]"); if(tr && (e.key==="Enter"||e.key===" ")){ e.preventDefault(); go("detail",tr.dataset.id); } });
+$("#back").addEventListener("click",()=>go("fleet")); $("#back2").addEventListener("click",()=>go("fleet"));
+$("#add-btn").addEventListener("click",()=>go("add"));
+
+const NEED = D.required_columns;
+function showCols(found){ $("#a-cols").innerHTML = NEED.map(c=>{ const ok = found ? found.includes(c) : null;
+  return `<div class="${ok===null?"":ok?"y":"n"}"><span class="num">${c}</span><span>${ok===null?"":ok?"✓":"missing"}</span></div>`; }).join(""); }
+showCols(null);
+$("#a-file").addEventListener("change",e=>{ const f=e.target.files[0]; if(!f) return; const rd=new FileReader();
+  rd.onload=()=>{ const head=String(rd.result).split(/\r?\n/)[0].split(",").map(s=>s.trim().replace(/"/g,"")); showCols(head);
+    const miss = NEED.filter(c=>!head.includes(c)).length;
+    $("#a-msg").textContent = miss ? `${miss} column${miss>1?"s":""} missing. This log can't be scored until they're added.` : "All columns found. This log can be watched."; };
+  rd.readAsText(f.slice(0,8192)); });
+function snippet(){
+  const v = id => $(id).value.trim(), name = v("#a-name") || "new_pipeline";
+  $("#a-snip").textContent = `{"id": "${name.replace(/^air_quality_/,"")}", "name": "${name}", "source": "${v("#a-src")}",\n "table": "logs/<folder>", "owner": "${v("#a-owner")}", "config": "${v("#a-cfg")}"},`;
+}
+["#a-name","#a-src","#a-cfg","#a-owner"].forEach(id=>$(id).addEventListener("input",snippet));
+$("#add-form").addEventListener("submit",e=>{ e.preventDefault(); const t=$("#a-snip").textContent;
+  const done=()=>$("#a-copy").textContent="Copied. Paste it into PIPELINES in build_dashboard.py.";
+  if(navigator.clipboard) navigator.clipboard.writeText(t).then(done,()=>{ $("#a-copy").textContent="Copy failed. Select the text above and copy it."; });
+  else $("#a-copy").textContent="Select the text above and copy it."; });
+render();
+</script>
+</body>
+</html>

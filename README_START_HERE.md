@@ -138,3 +138,19 @@ using `seed_data_backup/`, you can skip straight to Step 3. Running fresh is rec
 want data all the way to today.
 
 **Order to do things:** Step 1 → 2 → 3 for the thesis results; add Step 4 to keep it live.
+
+---
+
+## STEP 5 — The dashboard (Pipeline Radar)
+
+`dashboard/index.html` is a live dashboard for data engineers: every watched pipeline ranked by
+tomorrow's failure risk, why the risk is high, an alert log (came true / false alarm) and the
+health signals (missing rows, data drift, source speed, sudden jumps). Click a pipeline to open it.
+
+- **Rebuilt every morning** by the GitHub Action (`python build_dashboard.py`, after `run_daily.py`).
+- **Open it:** double-click `dashboard/index.html` (all data is inside the file), or host the
+  `dashboard/` folder on any static host.
+- **Honest history:** each day's forecast is saved as it is made in `outputs/forecast_log.csv`.
+- **Add a pipeline:** add one entry to `PIPELINES` in `build_dashboard.py` (its run log needs the
+  same columns as `logs/*/pipeline_runs.csv`). The dashboard's "+ Add pipeline" screen checks a CSV.
+- Pipelines with fewer than 30 past failures are marked **LOW CONF.** (Pune today).
