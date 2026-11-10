@@ -22,10 +22,12 @@ then a daily job keeps collecting new data and retraining so the model stays cur
 | `retrain_weekly.py` | retrains on all data, saves the model, logs performance over time |
 | `DPFP_Phase2_Modelling.ipynb` | the **analysis notebook** — all models, results, charts for your thesis |
 | `requirements.txt` | Python packages to install |
-| `DEPLOY_PYTHONANYWHERE.md` | how to put the daily job on a free server so it runs by itself |
-| `seed_data_backup/` | a **backup** of already-generated datasets (fallback — see Step 2) |
-| `Research_Findings_47_Papers.xlsx` | your 47-paper research-gap analysis |
-| `Project_Novelty_Objectives_Methodology.docx` | objectives, methodology, research problem |
+| `.github/workflows/daily.yml` | **GitHub Actions automation** — daily run + Sunday retrain (see Step 4) |
+| `DEPLOY_PYTHONANYWHERE.md` | older alternative: run the daily job on a free PythonAnywhere server |
+| `logs/`, `data/`, `database/` | the datasets and run history (committed, so the automation can continue them) |
+| `outputs/` | trained model, performance history, notebook figures |
+| `Documents/Research_Findings_47_Papers.xlsx` | your 47-paper research-gap analysis |
+| `Documents/Project_Novelty_Objectives_Methodology.docx` | objectives, methodology, research problem |
 | `Data pipeline failure prediction novelty.md` | the novelty write-up |
 | `Project validation and ratings.md` | the Q2/Q3 publication rating |
 
@@ -76,15 +78,8 @@ Notes:
   python run_two_cities.py --start 2026-09-01 --end 2026-09-30
   ```
 
-**If you don't want to re-run the full history:** the folder `seed_data_backup/` already contains
-finished datasets (through 2026-10-27, hazard-free). To use them instead of running Step 2, copy
-them into place:
-```bash
-mkdir -p logs/api_runs logs/delhi_runs
-cp seed_data_backup/pipeline_runs_p.csv logs/api_runs/pipeline_runs.csv
-cp seed_data_backup/pipeline_runs_d.csv logs/delhi_runs/pipeline_runs.csv
-```
-Either way (fresh run or backup), you end up with the same two CSV files in the same place.
+**You do not need to re-run the full history.** The finished datasets are already in the repo
+(`logs/api_runs/` and `logs/delhi_runs/`, 2022-08-05 onward). Step 2 is only for rebuilding from scratch.
 
 ---
 
@@ -106,18 +101,20 @@ Re-run this notebook any time your dataset grows and all results update.
 
 ## STEP 4 — Come to the present and stay there (automation)
 
-So the project keeps working day by day without you running anything by hand, schedule the
-daily job. On your own machine this is one cron line; on a free server follow
-`DEPLOY_PYTHONANYWHERE.md` (Open-Meteo is already allowed on the free tier).
+This is automated with **GitHub Actions** (`.github/workflows/daily.yml`). Nothing to run by hand:
 
-```bash
-# runs once a day: fetches yesterday for both cities, retrains every Sunday
-python run_daily.py
-```
+- **Every day, 08:00 India time:** fetches yesterday for Pune and Delhi. If any earlier day was
+  missed, it is filled in too (up to 60 days back).
+- **Every Sunday (India time):** retrains the model on all data, saves `outputs/dpfp_model.joblib`
+  and appends one row to `outputs/performance_history.csv`.
+- The new data is committed back to the repo, so the repo always holds the latest dataset and model.
+- To run it now: GitHub → **Actions** → *DPFP daily pipeline* → **Run workflow**
+  (tick *force_retrain* to retrain outside Sunday).
 
-Each run adds one new day per city. Every Sunday it retrains and appends a row to
-`outputs/performance_history.csv`, which **Section 14b of the notebook** turns into a
-"model improving over time" chart.
+Manual run on your own machine is the same script: `python run_daily.py`.
+
+`outputs/performance_history.csv` feeds **Section 14b of the notebook**, a
+"model improving over time" chart. (The notebook also needs `pip install -r requirements-notebook.txt`.)
 
 ---
 

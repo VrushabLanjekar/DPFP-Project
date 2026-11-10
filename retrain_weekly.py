@@ -172,14 +172,14 @@ def retrain_and_log():
             "model": model,
             "features": cols,
             "medians": full_med.to_dict(),
-            "trained_on": dt.date.today().isoformat(),
+            "trained_on": dt.datetime.now(dt.timezone(dt.timedelta(hours=5, minutes=30))).date().isoformat(),
             "n_rows": n,
         },
         OUT / "dpfp_model.joblib",
     )
 
     row = {
-        "retrain_date": dt.date.today().isoformat(),
+        "retrain_date": dt.datetime.now(dt.timezone(dt.timedelta(hours=5, minutes=30))).date().isoformat(),
         "data_through": str(dates.max().date()),
         "n_rows": n,
         "n_failures": int(y.sum()),
@@ -190,6 +190,9 @@ def retrain_and_log():
     }
     hist_path = OUT / "performance_history.csv"
     hist = pd.read_csv(hist_path) if hist_path.is_file() else pd.DataFrame()
+    # One row per retrain day: re-running the same day replaces the row instead of duplicating it.
+    if not hist.empty:
+        hist = hist[hist["retrain_date"] != row["retrain_date"]]
     hist = pd.concat([hist, pd.DataFrame([row])], ignore_index=True)
     hist.to_csv(hist_path, index=False)
 
