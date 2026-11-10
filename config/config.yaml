@@ -1,0 +1,58 @@
+project:
+  name: "Pune API Air Quality Pipeline Observability"
+  source: "Open-Meteo Air Quality API"
+
+data:
+  source_type: "api"
+  processed_directory: "data/processed_api"
+
+api:
+  latitude: 18.5204
+  longitude: 73.8567
+  timezone: "Asia/Kolkata"
+  domains: "cams_global"
+  timeout_seconds: 60
+  max_retries: 2
+
+periods:
+  historical_start: "2022-08-05"
+  historical_end: "2035-12-31"
+  test_start: "2026-01-01"
+  test_end: "2026-12-31"
+
+pipeline:
+  expected_interval_minutes: 60
+  expected_records_per_day: 24
+
+monitoring:
+  coverage_warning_percent: 95
+  coverage_failure_percent: 80
+  missing_value_warning_percent: 10
+  missing_value_failure_percent: 25
+  high_runtime_warning_seconds: 2.0
+  sla_failure_seconds: 3.0
+  max_hourly_rate_of_change_pm25: 50.0
+  max_consecutive_stagnant_hours: 6
+
+# Regulatory severe hazard thresholds (CPCB / WHO Standards for India)
+# Values exceeding these indicate extreme pollution emergencies or sensor runaway.
+quality_bounds:
+  PM2.5: 120.0    # CPCB Severe hazard limit (µg/m³); historical peak: 155.5
+  PM10: 200.0     # CPCB Severe hazard limit (µg/m³); historical peak: 223.1
+  NO2: 100.0      # CPCB Severe hazard limit (µg/m³); historical peak: 105.5
+  SO2: 100.0      # CPCB Severe hazard limit (µg/m³)
+  CO: 2000.0      # CPCB Severe hazard limit (µg/m³); historical peak: 2253.0
+  OZONE: 180.0    # CPCB 1-hr standard (µg/m³); historical peak: 204.0
+
+database:
+  # Separate DB protects your existing historical database.
+  path: "database/api_pipeline_observability.db"
+
+logging:
+  # Separate directory protects your existing logs.
+  directory: "logs/api_runs"
+
+# Per-city rolling-history file for the feature enricher (drift/latency
+# baselines). Each city MUST use its own file so their histories never mix.
+enrichment:
+  history_path: "logs/api_runs/feature_history.json"

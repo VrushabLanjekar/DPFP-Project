@@ -1,0 +1,21 @@
+# Python environment (rebuild with: pip install -r requirements.txt)
+venv/
+.venv/
+__pycache__/
+*.pyc
+
+# Notebook checkpoints
+.ipynb_checkpoints/
+
+# Secrets, if any are added later
+.env
+
+# OS / editor junk
+Thumbs.db
+.DS_Store
+.vscode/
+.idea/
+
+# NOTE: data/, database/, logs/ and outputs/ ARE tracked on purpose.
+# The pipeline is incremental and the weekly retrain trains on logs/*/pipeline_runs.csv,
+# so the automation needs them in the repo.

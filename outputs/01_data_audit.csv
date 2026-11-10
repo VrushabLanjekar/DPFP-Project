@@ -1,0 +1,3 @@
+city,runs,from,to,missing_days,FAIL,fail_%,DATA_QUALITY,API_SLA,hazard_warning_days
+Delhi,1557,2022-08-05,2026-11-08,0,133,8.54,130,3,1252
+Pune,1557,2022-08-05,2026-11-08,0,11,0.71,8,3,121

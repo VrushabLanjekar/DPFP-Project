@@ -1,0 +1,2 @@
+threshold (from validation),failures in test,caught 1 day ahead (TP),missed (FN),false alarms (FP),recall,precision,false alarms / month,alarms / month
+0.1163220089075838,43,25,18,76,0.5813953488372093,0.24752475247524752,5.954639175257732,7.9134020618556695

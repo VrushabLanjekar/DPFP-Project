@@ -1,0 +1,36 @@
+{
+  "threshold": 0.1163220089075838,
+  "features": [
+    "max_hourly_jump",
+    "drift_psi_mean",
+    "drift_psi_max",
+    "max_stagnation_run",
+    "invalid_value_count",
+    "max_hourly_jump_roll7",
+    "drift_psi_mean_roll7",
+    "hazard_exceed_count",
+    "duration_seconds",
+    "duration_vs_baseline",
+    "api_latency_mean",
+    "api_latency_vs_baseline",
+    "api_latency_roll7_std",
+    "runtime_warn_last7",
+    "dq_fail_today",
+    "sla_fail_today",
+    "fails_last7",
+    "days_since_fail",
+    "month_sin",
+    "month_cos"
+  ],
+  "algo": "RandomForest",
+  "imbalance": "none",
+  "trained_on": "Delhi",
+  "train_period": [
+    "2022-08-05",
+    "2024-09-20"
+  ],
+  "validation_period": [
+    "2024-09-21",
+    "2025-10-14"
+  ]
+}
