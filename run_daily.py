@@ -26,7 +26,9 @@ On PythonAnywhere: add ONE daily scheduled task that runs:
 import argparse
 import csv
 import datetime as dt
+import json
 import sys
+import urllib.request
 from pathlib import Path
 
 import yaml
@@ -42,6 +44,45 @@ CITY_CONFIGS = [
 
 IST = dt.timezone(dt.timedelta(hours=5, minutes=30))
 MAX_CATCHUP_DAYS = 60  # safety cap so a long outage can't trigger thousands of calls
+
+# --- Data-ready check -------------------------------------------------------
+# Open-Meteo's air-quality data comes from the CAMS model, updated twice a day
+# (runs start 00:00 and 12:00 UTC and are published ~10 h later). A day's evening
+# hours (about 17:00-23:00 IST) come from that day's 12:00 UTC run; until it is
+# published those hours are forecast values that get replaced later. Because the
+# pipeline never re-fetches a finished day, we only fetch a day once it is final.
+CAMS_META_URL = "https://air-quality-api.open-meteo.com/data/cams_global/static/meta.json"
+FALLBACK_WAIT_HOURS = 16  # status file unreadable: wait until 12:00 UTC + 16 h (09:30 IST next day)
+
+
+def latest_model_run():
+    """UTC time of the newest CAMS run Open-Meteo has published, or None if unknown."""
+    try:
+        with urllib.request.urlopen(CAMS_META_URL, timeout=20) as resp:
+            meta = json.load(resp)
+        return dt.datetime.fromtimestamp(int(meta["last_run_initialisation_time"]), dt.timezone.utc)
+    except Exception as exc:
+        print(f"  Data-ready check: could not read Open-Meteo status ({type(exc).__name__}); "
+              f"using the time rule instead.")
+        return None
+
+
+def day_is_final(day_text: str, latest_run, now_utc) -> bool:
+    """True once the CAMS run that starts at 12:00 UTC on that day has been published."""
+    d = dt.date.fromisoformat(day_text)
+    needed = dt.datetime(d.year, d.month, d.day, 12, tzinfo=dt.timezone.utc)
+    if latest_run is not None:
+        return latest_run >= needed
+    return now_utc >= needed + dt.timedelta(hours=FALLBACK_WAIT_HOURS)
+
+
+def retrained_today(today) -> bool:
+    """True if outputs/dpfp_model.joblib was already retrained today (India time)."""
+    try:
+        import joblib
+        return joblib.load(HERE / "outputs" / "dpfp_model.joblib").get("trained_on") == today.isoformat()
+    except Exception:
+        return False
 
 
 def last_logged_date(cfg_path: str):
@@ -70,9 +111,15 @@ def dates_to_fetch(cfg_path: str, end_text: str):
     return out
 
 
-def fetch_day(date_text: str, catch_up: bool = True):
-    """Run the pipeline for date_text (plus any missed earlier days), both cities."""
+def fetch_day(date_text: str, catch_up: bool = True, ready_check: bool = True):
+    """Run the pipeline for date_text (plus any missed earlier days), both cities.
+    Returns the (city, day) pairs left for a later run because their data was not final yet."""
     from src.pipeline.runner import run_pipeline  # imported here so --help works without deps
+    latest = latest_model_run() if ready_check else None
+    if ready_check and latest is not None:
+        print(f"Newest published model run: {latest:%Y-%m-%d %H:%M} UTC")
+    now_utc = dt.datetime.now(dt.timezone.utc)
+    pending = []
     for label, cfg in CITY_CONFIGS:
         if not (HERE / cfg).is_file():
             print(f"  [{label}] SKIP - config not found: {cfg}")
@@ -83,7 +130,12 @@ def fetch_day(date_text: str, catch_up: bool = True):
             continue
         if len(days) > 1:
             print(f"  [{label}] catching up {len(days)} days: {days[0]} -> {days[-1]}")
-        for day in days:
+        for i, day in enumerate(days):
+            if ready_check and not day_is_final(day, latest, now_utc):
+                # Later days can't be final either; the next run (e.g. the 11:00 backup) retries.
+                print(f"  [{label}] {day}: data not final yet - left for the next run")
+                pending += [(label, d) for d in days[i:]]
+                break
             try:
                 r = run_pipeline(day, config_path=str(HERE / cfg))
                 status = r.get("overall_status", "?")
@@ -91,6 +143,7 @@ def fetch_day(date_text: str, catch_up: bool = True):
                       + (" (skipped - already done)" if r.get("skipped") else ""))
             except Exception as exc:
                 print(f"  [{label}] {day}: ERROR {type(exc).__name__}: {exc}")
+    return pending
 
 
 def main():
@@ -101,6 +154,8 @@ def main():
                     help="Do not retrain even if today is Sunday.")
     ap.add_argument("--force-retrain", action="store_true",
                     help="Retrain regardless of weekday.")
+    ap.add_argument("--no-ready-check", action="store_true",
+                    help="Fetch even if Open-Meteo has not published the final data for the day yet.")
     args = ap.parse_args()
 
     # "Today" is India time, so the schedule behaves the same on any server (GitHub runs in UTC).
@@ -109,11 +164,19 @@ def main():
 
     print(f"=== DPFP daily job - {today.isoformat()} (IST) ===")
     print(f"Fetching data up to: {date_text}")
-    fetch_day(date_text, catch_up=args.date is None)
+    pending = fetch_day(date_text, catch_up=args.date is None, ready_check=not args.no_ready_check)
 
-    # Retrain weekly (Sundays), unless overridden.
+    # Retrain weekly (Sundays), unless overridden. The job runs twice a day (08:00 and an
+    # 11:00 backup), so retrain only once the new data is in, and only once per day.
     is_sunday = today.weekday() == 6
     do_retrain = args.force_retrain or (is_sunday and not args.no_retrain)
+    if do_retrain and not args.force_retrain:
+        if pending:
+            print("\nRetrain postponed: the newest data is not final yet (the next run will retrain).")
+            do_retrain = False
+        elif retrained_today(today):
+            print("\nAlready retrained today - skipping.")
+            do_retrain = False
     retrain_failed = False
     if do_retrain:
         print("\nWeekly retrain triggered...")
@@ -123,7 +186,7 @@ def main():
         except Exception as exc:
             retrain_failed = True
             print(f"  Retrain ERROR: {type(exc).__name__}: {exc}")
-    else:
+    elif not is_sunday:
         print("\nNo retrain today (retrain runs on Sundays).")
 
     print("=== done ===")

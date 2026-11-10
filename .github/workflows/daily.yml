@@ -1,11 +1,14 @@
 name: DPFP daily pipeline
 
 # Every day at 08:00 India time (02:30 UTC): fetch any new days for Pune + Delhi.
-# On Sundays (India time) run_daily.py also retrains the model.
+# Backup run at 11:00 India time (05:30 UTC): catches up if the 08:00 run was skipped
+# by GitHub or the data was not final yet; it does nothing if 08:00 already worked.
+# On Sundays (India time) run_daily.py also retrains the model (once, after the new data is in).
 # Run it by hand any time from the Actions tab ("Run workflow").
 on:
   schedule:
-    - cron: "30 2 * * *"
+    - cron: "30 2 * * *"   # 08:00 IST
+    - cron: "30 5 * * *"   # 11:00 IST backup
   workflow_dispatch:
     inputs:
       force_retrain:

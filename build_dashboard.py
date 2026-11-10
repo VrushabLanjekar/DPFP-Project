@@ -250,7 +250,7 @@ def main():
     perf = pd.read_csv(HERE / "outputs" / "performance_history.csv").tail(12)
     data = {
         "threshold": threshold,
-        "built_at": dt.datetime.now(IST).isoformat(timespec="minutes"),
+        "built_at": dt.datetime.now(IST).isoformat(timespec="minutes"),  # kept if nothing changed (below)
         "data_through": common[-1],
         "model_trained": art.get("trained_on", meta.get("train_period", ["?"])[-1]),
         "required_columns": REQUIRED_COLUMNS,
@@ -259,6 +259,15 @@ def main():
         "pipelines": pipes,
     }
     OUT.mkdir(exist_ok=True)
+    # Nothing new since the last build (e.g. the 11:00 backup run after a good 08:00 run)?
+    # Keep the old build time so the files come out identical and no commit is made.
+    try:
+        old = json.loads((OUT / "data.json").read_text(encoding="utf-8"))
+        if {k: v for k, v in old.items() if k != "built_at"} == \
+                json.loads(json.dumps({k: v for k, v in data.items() if k != "built_at"})):
+            data["built_at"] = old["built_at"]
+    except Exception:
+        pass
     blob = json.dumps(data, separators=(",", ":"))
     (OUT / "data.json").write_text(blob, encoding="utf-8")
     page = (OUT / "template.html").read_text(encoding="utf-8").replace("__DATA__", blob.replace("</", "<\\/"))

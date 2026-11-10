@@ -105,6 +105,10 @@ This is automated with **GitHub Actions** (`.github/workflows/daily.yml`). Nothi
 
 - **Every day, 08:00 India time:** fetches yesterday for Pune and Delhi. If any earlier day was
   missed, it is filled in too (up to 60 days back).
+- **Data-ready check:** a day is fetched only once Open-Meteo has published its final values
+  (about 03:30 IST the next morning). Fetching earlier would store forecast values for the evening hours.
+- **Backup run, 11:00 India time:** catches up if GitHub skipped the 08:00 run or the data was late.
+  It does nothing (and makes no commit) when the 08:00 run already worked.
 - **Every Sunday (India time):** retrains the model on all data, saves `outputs/dpfp_model.joblib`
   and appends one row to `outputs/performance_history.csv`.
 - The new data is committed back to the repo, so the repo always holds the latest dataset and model.
